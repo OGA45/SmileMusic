@@ -5,6 +5,8 @@ import os
 from re import match
 import bs4
 import discord
+from discord import member
+from discord.ext import commands
 # import youtubedl.youtube_dl as youtube_dl
 import youtube_dl
 import requests
@@ -76,7 +78,7 @@ headers = {
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
-client = discord.Client()
+client = discord.Client(intents=discord.Intents.all())
 
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -763,7 +765,7 @@ async def set_prefix(ctx, key, value):
         set_prefix_sql(key, value)
         client_id = client.user.id
         bot_name = client.user.name
-        await set_nick(ctx.guild, client_id, bot_name, force=True)
+        #await set_nick(ctx.guild, client_id, bot_name, force=True)
         await ctx.channel.send("prefixを変更しました。")
     except:
         traceback.print_exc()
@@ -1071,6 +1073,20 @@ async def on_message(ctx):
             return
 
         pass
+
+@client.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState,after: discord.VoiceState):
+    vch = before.channel
+    vcl = discord.utils.get(client.voice_clients, channel=vch)
+    bot_user = 0
+    for user in vch.members:
+        if user.bot:
+            bot_user+=1
+    print(len(vch.members))
+    print(bot_user)
+    if (len(vch.members) == 1  or bot_user==len(vch.members)) and vcl.is_connected():
+        await vcl.disconnect()
+
 
 
 table_name = 'guilds'
