@@ -41,6 +41,7 @@ services:
             - SMILEMUSIC_DISCORD_TOKEN
             - SMILEMUSIC_PREFIX
             - SMILEMUSIC_ENV=dev
+            - YOUTUBE_TOKEN
         volumes:
             - ./python:/opt
 

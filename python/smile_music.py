@@ -7,8 +7,7 @@ import bs4
 import discord
 from discord import member
 from discord.ext import commands
-# import youtubedl.youtube_dl as youtube_dl
-import youtube_dl
+import yt_dlp as youtube_dl
 import requests
 from urllib import request as req
 from urllib import parse
@@ -26,6 +25,7 @@ import re
 import traceback
 from discord.opus import Encoder as OpusEncoder
 from io import BufferedReader
+from googleapiclient.discovery import build
 
 log = logging.getLogger(__name__)
 # Suppress noise about console usage from errors
@@ -35,7 +35,7 @@ ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
-    'noplaylist': True,
+    'noplaylist': False,
     'nocheckcertificate': True,
     'ignoreerrors': False,
     'logtostderr': False,
@@ -369,6 +369,97 @@ async def play_music(ctx, url, first_seek=None):
         await ctx.channel.send("再生に失敗しました")
         return True
 
+async def playlist_queue(ctx, movie_infos_list):
+    queue = guild_table.get(ctx.guild.id, {}).get('music_queue')
+    if queue is None or queue==[]:
+        play=True
+    else:
+        play=False
+
+    if (not movie_infos_list):
+        await ctx.channel.send("検索に失敗しました")
+        return
+    if ctx.guild.voice_client is None:
+        await join(ctx)
+    for movie_infos in movie_infos_list:
+        queue = guild_table.get(ctx.guild.id, {}).get('music_queue')
+        start_index = len(queue) if queue else 0
+        print(movie_infos)
+        info = movie_infos[0]
+        author = info["author"]
+        movie_embed = discord.Embed()
+        movie_embed.set_thumbnail(url=info["image_url"])
+        infos_len = len(movie_infos)
+        if infos_len <= 1:
+            title = info["title"]
+            url = info["url"]
+            t = info["time"]
+            movie_embed.add_field(name="\u200b",
+                                value=f"[{title}]({url})",
+                                inline=False)
+            movie_embed.add_field(name="再生時間", value=f"{get_timestr(t)}")
+            movie_embed.add_field(name="キューの順番", value=f"{start_index + 1}")
+        else:
+            for x in movie_infos[:min(3, infos_len - 1)]:
+                title = x["title"]
+                url = x["url"]
+                movie_embed.add_field(name="\u200b",
+                                    value=f"[{title}]({url})",
+                                    inline=False)
+            movie_embed.add_field(name="\u200b", value=f"・・・", inline=False)
+            last_info = movie_infos[-1]
+            title = last_info["title"]
+            url = last_info["url"]
+            movie_embed.add_field(name="\u200b",
+                                value=f"[{title}]({url})",
+                                inline=False)
+            total_datetime = get_timestr(
+                to_time(sum([to_total_second(x["time"]) for x in movie_infos])))
+            movie_embed.add_field(name="再生時間", value=f"{total_datetime}")
+            movie_embed.add_field(
+                name="キューの順番",
+                value=f"{start_index + 1}...{start_index + infos_len}")
+            movie_embed.add_field(name="曲数", value=f"{infos_len}")
+        movie_embed.set_author(name=f"{author.display_name} added",
+                            icon_url=author.avatar_url)
+        #await ctx.channel.send(embed=movie_embed)
+        if queue:
+            queue.extend(movie_infos)
+        else:
+            guild_table[ctx.guild.id] = {
+                "has_loop": False,
+                "has_loop_queue": False,
+                "player": None,
+                "music_queue": movie_infos
+            }
+    await list_show(ctx)
+    if play:
+        while (True):
+            data = guild_table.get(ctx.guild.id, {})
+            if not ctx.guild.voice_client:
+                guild_table.pop(ctx.guild.id, None)
+                await ctx.channel.send("再生を停止しました。")
+                return
+            if not data or not data['music_queue']:
+                return
+            current_info = data['music_queue'][0]
+            is_error = await play_music(ctx,
+                                current_info.get('url'),
+                                first_seek=current_info.get('first_seek'))
+            if is_error:
+                data['music_queue'].pop(0)
+                continue
+
+            has_loop = guild_table.get(ctx.guild.id, {}).get('has_loop')
+            has_loop_queue = guild_table.get(ctx.guild.id,
+                                                {}).get('has_loop_queue')
+
+            if not has_loop:
+                x = data['music_queue'].pop(0)
+                if has_loop_queue:
+                    data['music_queue'].append(x)
+
+
 
 async def play_queue(ctx, movie_infos):
     if (not movie_infos):
@@ -432,7 +523,7 @@ async def play_queue(ctx, movie_infos):
             data = guild_table.get(ctx.guild.id, {})
             if not ctx.guild.voice_client:
                 guild_table.pop(ctx.guild.id, None)
-                await ctx.channel.send("切断しました。")
+                await ctx.channel.send("再生を停止しました。")
                 return
             if not data or not data['music_queue']:
                 return
@@ -467,6 +558,26 @@ async def stop(ctx):
 
     await ctx.channel.send("スキップしました。")
 
+async def list_show(ctx):
+    queue = guild_table.get(ctx.guild.id, {}).get('music_queue')
+    if queue:
+        queue_embed = discord.Embed()
+        queue_embed.set_thumbnail(url=queue[0]["image_url"])
+        total_time = sum([to_total_second(x["time"]) for x in queue])
+        for i, x in enumerate(queue):
+            title = x["title"]
+            url = x["url"]
+            t = x["time"]
+            author = x["author"]
+            name = "__Now Playing:__" if i == 0 else "__Up Next:__" if i == 1 else  "__End Queue:__" if i+1==len(queue) else "\u200b"
+            if i<20 or i+1==len(queue):
+                queue_embed.add_field(
+                    name=name,
+                    value=f"`{i + 1}.`[{title}]({url})|`{get_timestr(t)} Requested by: {author.display_name}`",inline=False)
+        player = guild_table.get(ctx.guild.id, {}).get('player')
+        queue_embed.add_field(
+            name="\u200b", value=f"残り時間: `{get_timestr(to_time(total_time))}`")
+        await ctx.channel.send(embed=queue_embed)
 
 async def show_queue(ctx):
     if ctx.guild.voice_client is None:
@@ -698,6 +809,53 @@ async def resume(ctx):
 
     await ctx.channel.send("再生を再開しました。")
 
+async def playlist(ctx, args, add_infos={}):
+    if ctx.author.voice is None:
+        await ctx.channel.send("あなたはボイスチャンネルに接続していません。")
+        return
+    await ctx.channel.send("プレイリストを作成中です。しばらくお待ちください。")
+    #progress_bar= await ctx.channel.send('進捗:0%')
+    if re.match("https?://www.youtube.com.*", args[1]) or re.match("https?://youtube.com.*", args[1]):
+        pattern = re.compile(r'(?<=list=)[^?]*')
+        listid=pattern.search(args[1])
+        movie_infos_list = []
+        movie_infos = None
+        #response = requests.get('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId='+str(listid.group())+'&key='+str(youtube_token)+'&maxResults=50')
+        #data=response.json()
+        response = youtube.playlistItems().list(part='snippet',playlistId=listid.group(),maxResults=50).execute()
+        sums=response['pageInfo']['totalResults']
+        for data in response['items']:
+            try:
+                #movie_infos=await infos_from_ytdl("https://www.youtube.com/watch?v="+str(data['snippet']['resourceId']['videoId']), client.loop)
+                movie_infos=await infos_youtube_api(data)
+            except:
+                await ctx.channel.send("動画情報取得中に一部エラーが発生しました。再生できない動画が含まれているようです。")
+            for info in movie_infos:
+                info["author"] = ctx.author
+                info.update(add_infos)
+            movie_infos_list.append(movie_infos)
+        try:
+            response['nextPageToken']
+            while(1):
+                response = youtube.playlistItems().list(part='snippet',playlistId=listid.group(),maxResults=50,pageToken=response['nextPageToken']).execute()
+                #data=response.json()
+                for data in response['items']:
+                    try:
+                        #movie_infos=await infos_from_ytdl("https://www.youtube.com/watch?v="+str(data2['snippet']['resourceId']['videoId']), client.loop)
+                        movie_infos=await infos_youtube_api(data)
+                    except:
+                        await ctx.channel.send("動画情報取得中に一部エラーが発生しました。再生できない動画が含まれているようです。")
+                    for info in movie_infos:
+                        info["author"] = ctx.author
+                        info.update(add_infos)
+                    movie_infos_list.append(movie_infos)
+                try:
+                    response['nextPageToken']
+                except:
+                    break
+        except:
+            print("次ページなし")
+        await playlist_queue(ctx, movie_infos_list)
 
 async def play(ctx, args, add_infos={}):
     optionbases = [x for x in args if x.startswith('-')]
@@ -756,7 +914,7 @@ async def play(ctx, args, add_infos={}):
         print(args)
         await ctx.channel.send("検索に失敗しました。")
         return
-
+    print(movie_infos)
     await play_queue(ctx, movie_infos)
 
 
@@ -985,6 +1143,26 @@ async def infos_from_ytdl(url, loop=None):
 
     return movie_infos
 
+async def infos_youtube_api(data):
+    movie_infos = []
+    part = ['snippet', 'contentDetails']
+    response2 = youtube.videos().list(part=part, id=data['snippet']['resourceId']['videoId']).execute()
+    for data2 in response2['items']:
+        pttn_time = re.compile(r'PT(\d+H)?(\d+M)?(\d+S)?')
+        keys = ['hours', 'minutes', 'seconds']
+        m = pttn_time.search(data2['contentDetails']['duration'])
+        kwargs = {k: 0 if v is None else int(v[:-1])
+        for k, v in zip(keys, m.groups())}
+        info = {
+        "url": 'https://www.youtube.com/watch?v='+str(data['snippet']['resourceId']['videoId']),
+        "title": data2['snippet']['title'],
+        "image_url": data2['snippet']['thumbnails']['default']['url'],
+        "time": to_time(datetime.timedelta(**kwargs).total_seconds())
+        }
+    movie_infos.append(info)
+    print(movie_infos)
+    return movie_infos
+
 
 @client.event
 async def on_ready():
@@ -1025,6 +1203,8 @@ async def on_message(ctx):
         await leave(ctx)
     elif any([x == args[0] for x in ["p"]]) and len(args) >= 2:
         await play(ctx, args)
+    elif any([x == args[0] for x in ["pl"]]) and len(args) >= 2:
+        await playlist(ctx, args)
     elif args[0] == "py" and len(args) >= 2:
         args.insert(1, "-y")
 
@@ -1096,6 +1276,11 @@ ssl._create_default_https_context = ssl._create_unverified_context
 token = os.environ['SMILEMUSIC_DISCORD_TOKEN']
 defalut_prefix = os.environ['SMILEMUSIC_PREFIX']
 env = os.environ['SMILEMUSIC_ENV']
+youtube_token=os.environ['YOUTUBE_TOKEN']
+YOUTUBE_API_SERVICE_NAME = 'youtube'
+YOUTUBE_API_VERSION = 'v3'
+YOUTUBE_API_KEY = os.environ['YOUTUBE_TOKEN']
+youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION,developerKey=YOUTUBE_API_KEY)
 if env != "dev":
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
 else:
