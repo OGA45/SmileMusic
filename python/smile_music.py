@@ -459,7 +459,61 @@ async def playlist_queue(ctx, movie_infos_list):
                 if has_loop_queue:
                     data['music_queue'].append(x)
 
+async def play_live_queue(ctx, movie_infos):
+    if (not movie_infos):
+        await ctx.channel.send("検索に失敗しました")
+        return
+    if ctx.guild.voice_client is None:
+        await join(ctx)
 
+    queue = guild_table.get(ctx.guild.id, {}).get('music_queue')
+    start_index = len(queue) if queue else 0
+
+    info = movie_infos[0]
+    author = info["author"]
+    movie_embed = discord.Embed()
+    movie_embed.set_thumbnail(url=info["image_url"])
+    title = info["title"]
+    url = info["url"]
+    t = info["time"]
+    movie_embed.add_field(name="\u200b",value=f"[{title}]({url})",inline=False)
+    movie_embed.add_field(name="再生時間", value=f"{get_timestr(t)}")
+    movie_embed.add_field(name="キューの順番", value=f"{start_index + 1}")
+    movie_embed.set_author(name=f"{author.display_name} added",icon_url=author.avatar_url)
+    await ctx.channel.send(embed=movie_embed)
+    if queue:
+        queue.extend(movie_infos)
+    else:
+        guild_table[ctx.guild.id] = {
+            "has_loop": False,
+            "has_loop_queue": False,
+            "player": None,
+            "music_queue": movie_infos
+        }
+        while (True):
+            data = guild_table.get(ctx.guild.id, {})
+            if not ctx.guild.voice_client:
+                guild_table.pop(ctx.guild.id, None)
+                await ctx.channel.send("再生を停止しました。")
+                return
+            if not data or not data['music_queue']:
+                return
+            current_info = data['music_queue'][0]
+            is_error = await play_music(ctx,
+                             current_info.get('url'),
+                             first_seek=current_info.get('first_seek'))
+            if is_error:
+                data['music_queue'].pop(0)
+                continue
+
+            has_loop = guild_table.get(ctx.guild.id, {}).get('has_loop')
+            has_loop_queue = guild_table.get(ctx.guild.id,
+                                             {}).get('has_loop_queue')
+
+            if not has_loop:
+                x = data['music_queue'].pop(0)
+                if has_loop_queue:
+                    data['music_queue'].append(x)
 
 async def play_queue(ctx, movie_infos):
     if (not movie_infos):
@@ -857,6 +911,24 @@ async def playlist(ctx, args, add_infos={}):
             print("次ページなし")
         await playlist_queue(ctx, movie_infos_list)
 
+async def live(ctx, args, add_infos={}):
+    if ctx.author.voice is None:
+        await ctx.channel.send("あなたはボイスチャンネルに接続していません。")
+        return
+    if re.match("https?://www.youtube.com.*", args[1]) or re.match("https?://youtube.com.*", args[1]):
+        try:
+            pattern = re.compile(r'(?<=v=)[^?]*')
+            liveid=pattern.search(args[1])
+            movie_infos = await live_infos_youtube_api(liveid.group())
+            for info in movie_infos:
+                info["author"] = ctx.author
+                info.update(add_infos)
+        except:
+            traceback.print_exc()
+            await ctx.channel.send("検索に失敗しました。")
+            return
+        await play_live_queue(ctx, movie_infos)
+
 async def play(ctx, args, add_infos={}):
     optionbases = [x for x in args if x.startswith('-')]
     args = [i for i in args if i not in optionbases]
@@ -1163,6 +1235,19 @@ async def infos_youtube_api(data):
     print(movie_infos)
     return movie_infos
 
+async def live_infos_youtube_api(liveid):
+    movie_infos = []
+    part = ['snippet', 'contentDetails']
+    response2 = youtube.videos().list(part=part, id=liveid).execute()
+    for data2 in response2['items']:
+        info = {
+        "url": 'https://www.youtube.com/watch?v='+str(liveid),
+        "title": data2['snippet']['title'],
+        "image_url": data2['snippet']['thumbnails']['default']['url'],
+        "time": to_time(1)
+        }
+        movie_infos.append(info)
+    return movie_infos
 
 @client.event
 async def on_ready():
@@ -1205,6 +1290,8 @@ async def on_message(ctx):
         await play(ctx, args)
     elif any([x == args[0] for x in ["pl"]]) and len(args) >= 2:
         await playlist(ctx, args)
+    elif any([x == args[0] for x in ["live"]]) and len(args) >= 2:
+        await live(ctx, args)
     elif args[0] == "py" and len(args) >= 2:
         args.insert(1, "-y")
 
@@ -1259,13 +1346,12 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     vch = before.channel
     vcl = discord.utils.get(client.voice_clients, channel=vch)
     bot_user = 0
-    for user in vch.members:
-        if user.bot:
-            bot_user+=1
-    print(len(vch.members))
-    print(bot_user)
-    if (len(vch.members) == 1  or bot_user==len(vch.members)) and vcl.is_connected():
-        await vcl.disconnect()
+    if vcl!=None:
+        for user in vch.members:
+            if user.bot:
+                bot_user+=1
+        if (len(vch.members) == 1  or bot_user==len(vch.members)) and vcl.is_connected():
+            await vcl.disconnect()
 
 
 
