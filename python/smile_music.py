@@ -12,7 +12,7 @@ import requests
 from urllib import request as req
 from urllib import parse
 from threading import Timer
-import datetime
+from datetime import datetime, timedelta
 import logging
 import shlex
 import subprocess
@@ -20,6 +20,7 @@ import random
 import psycopg2
 # from niconico_dl_async import NicoNico as niconico_dl
 from niconicodl.niconico_dl_async import NicoNico as niconico_dl
+#from niconico import NicoNico
 import ssl
 import re
 import traceback
@@ -35,7 +36,7 @@ ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
-    'noplaylist': False,
+    'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
     'logtostderr': False,
@@ -44,13 +45,28 @@ ytdl_format_options = {
     'default_search': 'auto',
     'source_address':
     '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
-    'user-agent':
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:47.0) Gecko/20100101 Firefox/47.0"
+    'buffer_size':'16K',
+    #'http_chunk_size':'10M',
+    'hls_use_mpegts':True,
+    'keep_fragments':True,
+    'x':True,
+    'audio_format':'opus',
+    'audio_quality':'128K',
+    'user_agent':"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:47.0) Gecko/20100101 Firefox/47.0",
 }
 
 ffmpeg_options = {
     'before_options':
-    '-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
+    '-vn',
+    'options':
+    '-threads 20'
+}
+
+ffmpeg_stream_options = {
+    'before_options':
+    '-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options':
+    '-threads 20'
 }
 
 niconico_headers = {
@@ -100,7 +116,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
             data = data['entries'][0]
 
         filename = data['url'] if stream else ytdl.prepare_filename(data)
-        source = OriginalFFmpegPCMAudio(filename, **ffmpeg_options)
+        if stream:
+            source = OriginalFFmpegPCMAudio(filename, **ffmpeg_stream_options)
+        else:
+            source = OriginalFFmpegPCMAudio(filename, **ffmpeg_options)
         return cls(source, data=data, volume=volume)
 
 
@@ -116,9 +135,146 @@ class NicoNicoDLSource(discord.PCMVolumeTransformer):
         niconico = niconico_dl(nico_id, log=log)
         stream_url = await niconico.get_download_link()
 
-        source = OriginalFFmpegPCMAudio(stream_url, **ffmpeg_options)
+        source = OriginalFFmpegPCMAudio(stream_url, **ffmpeg_stream_options)
         return (cls(source, url=stream_url, volume=volume), niconico)
 
+
+class OriginalFFmpegOpusAudio(discord.FFmpegOpusAudio):
+    def __init__(self,
+                 source,
+                 *,
+                 bitrate=128,
+                 codec='libopus',
+                 executable='ffmpeg',
+                 pipe=False,
+                 stderr=None,
+                 before_options=None,
+                 options=None):
+        self.total_milliseconds = 0
+        self.source = source
+
+        super().__init__(source,
+                         bitrate=bitrate,
+                         codec=codec,
+                         executable=executable,
+                         pipe=pipe,
+                         stderr=stderr,
+                         before_options=before_options,
+                         options=options)
+
+    def wait_buffer(self):
+        self._stdout.peek(OpusEncoder.FRAME_SIZE)
+
+    @classmethod
+    async def from_url(cls,url, *, loop=None, stream=False,):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
+        if 'entries' in data:
+            data = data['entries'][0]
+
+        filename = data['url'] if stream else ytdl.prepare_filename(data)
+        return cls(filename, **ffmpeg_options) if not stream else cls(filename, **ffmpeg_stream_options)
+
+    def read(self):
+        ret = super().read()
+
+        if ret:
+            self.total_milliseconds += 20
+        return ret
+
+    def get_tootal_millisecond(self, seek_time):
+        if seek_time:
+            list = reversed([int(x) for x in seek_time.split(":")])
+            total = 0
+            for i, x in enumerate(list):
+                total += x * 3600 if i == 2 else x * 60 if i == 1 else x
+            return max(1000 * total, 0)
+        else:
+            raise Exception()
+
+    def rewind(self,
+               rewind_time,
+               *,
+               executable='ffmpeg',
+               pipe=False,
+               stderr=None,
+               before_options=None,
+               options=None):
+        seek_time = str(
+            int((self.total_milliseconds -
+                 self.get_tootal_millisecond(rewind_time)) / 1000))
+
+        self.seek(seek_time=seek_time,
+                  executable=executable,
+                  pipe=pipe,
+                  stderr=stderr,
+                  before_options=before_options,
+                  options=options)
+
+    def seek(self,
+             seek_time,
+             *,
+             executable='ffmpeg',
+             pipe=False,
+             stderr=None,
+             before_options=None,
+             options=None):
+        self.total_milliseconds = self.get_tootal_millisecond(seek_time)
+        proc = self._process
+        before_options = f"-ss {seek_time} " + before_options
+        args = []
+        subprocess_kwargs = {
+            'stdin': self.source if pipe else subprocess.DEVNULL,
+            'stderr': stderr
+        }
+
+        if isinstance(before_options, str):
+            args.extend(shlex.split(before_options))
+
+        args.append('-i')
+        args.append('-' if pipe else self.source)
+        args.extend(('-f', 's16le', '-ar', '48000', '-ac', '2', '-loglevel',
+                     'warning'))
+
+        if isinstance(options, str):
+            args.extend(shlex.split(options))
+
+        args.append('pipe:1')
+
+        args = [executable, *args]
+        kwargs = {'stdout': subprocess.PIPE}
+        kwargs.update(subprocess_kwargs)
+
+        self._process = self._spawn_process(args, **kwargs)
+        self._stdout = self._process.stdout
+        self.kill(proc)
+
+    def kill(self, proc):
+        if proc is None:
+            return
+
+        log.info('Preparing to terminate ffmpeg process %s.', proc.pid)
+
+        try:
+            proc.kill()
+        except Exception:
+            log.exception(
+                "Ignoring error attempting to kill ffmpeg process %s",
+                proc.pid)
+
+        if proc.poll() is None:
+            log.info(
+                'ffmpeg process %s has not terminated. Waiting to terminate...',
+                proc.pid)
+            proc.communicate()
+            log.info(
+                'ffmpeg process %s should have terminated with a return code of %s.',
+                proc.pid, proc.returncode)
+        else:
+            log.info(
+                'ffmpeg process %s successfully terminated with return code of %s.',
+                proc.pid, proc.returncode)
 
 class OriginalFFmpegPCMAudio(discord.FFmpegPCMAudio):
     def __init__(self,
@@ -242,7 +398,6 @@ class OriginalFFmpegPCMAudio(discord.FFmpegPCMAudio):
                 'ffmpeg process %s successfully terminated with return code of %s.',
                 proc.pid, proc.returncode)
 
-
 class perpetualTimer():
     def __init__(self, t, hFunction, *args):
         self.t = t
@@ -277,6 +432,12 @@ def get_volume_sql(key):
         d = cur.fetchone()
         return d[1] * defalut_volume if d and d[1] else defalut_volume
 
+def get_stream_sql(key):
+    with conn.cursor() as cur:
+        cur.execute(f'SELECT id, stream FROM {table_name} WHERE id=%s',
+                    (key, ))
+        d = cur.fetchone()
+        return d[1] if d is not None else defalut_stream
 
 def set_prefix_sql(key, value):
     with conn.cursor() as cur:
@@ -290,6 +451,13 @@ def set_volume_sql(key, value):
     with conn.cursor() as cur:
         cur.execute(
             f'INSERT INTO {table_name} (id, volume) VALUES (%s,%s) ON CONFLICT ON CONSTRAINT guilds_pkey DO UPDATE SET volume=%s',
+            (key, value, value))
+    conn.commit()
+
+def set_stream_sql(key, value):
+    with conn.cursor() as cur:
+        cur.execute(
+            f'INSERT INTO {table_name} (id, stream) VALUES (%s,%s) ON CONFLICT ON CONSTRAINT guilds_pkey DO UPDATE SET stream=%s',
             (key, value, value))
     conn.commit()
 
@@ -336,27 +504,37 @@ async def leave(ctx):
 def awaitable_voice_client_play(func, player, loop):
     f = asyncio.Future()
     after = lambda e: loop.call_soon_threadsafe(lambda: f.set_result(e))
-    func(player, after=after)
+    func(player, after=after)#実際に再生している場所
     return f
 
 
-async def play_music(ctx, url, first_seek=None):
+async def play_music(ctx, url, first_seek=None, opus=False):
     try:
         is_niconico = url.startswith("https://www.nicovideo.jp/")
         volume = get_volume_sql(str(ctx.guild.id))
+        stream = get_stream_sql(str(ctx.guild.id))
         if is_niconico:
-            player, niconico = await NicoNicoDLSource.from_url(
-                url, log=env=="dev", volume=volume)
+            player, niconico = await NicoNicoDLSource.from_url(url, log=env=="dev", volume=volume)
         else:
-            player = await YTDLSource.from_url(url,
-                                               loop=client.loop,
-                                               stream=True,
-                                               volume=volume)
+            data = guild_table.get(ctx.guild.id)
+            if not opus:
+                player = await YTDLSource.from_url(url,loop=client.loop, stream=stream)
+            else:
+                player = await OriginalFFmpegOpusAudio.from_url(url,loop=client.loop,stream=stream)
         guild_table[ctx.guild.id]["player"] = player
 
         if first_seek:
-            player.original.seek(**ffmpeg_options, seek_time=first_seek)
-        player.original.wait_buffer()
+            try:
+                if stream:
+                    player.original.seek(**ffmpeg_stream_options, seek_time=first_seek)
+                else:
+                    player.original.seek(**ffmpeg_options, seek_time=first_seek)
+            except:
+                if stream:
+                    player.seek(**ffmpeg_stream_options, seek_time=first_seek)
+                else:
+                    player.seek(**ffmpeg_options, seek_time=first_seek)
+        #player.original.wait_buffer()
         await awaitable_voice_client_play(ctx.guild.voice_client.play, player,
                                           client.loop)
 
@@ -366,7 +544,33 @@ async def play_music(ctx, url, first_seek=None):
     except BaseException as error:
         traceback.print_exc()
         print(url)
-        await ctx.channel.send("再生に失敗しました")
+        await ctx.channel.send("再生不可のためスキップします。")
+        return True
+
+async def play_live_music(ctx, url, first_seek=None):
+    try:
+        is_niconico = url.startswith("https://www.nicovideo.jp/")
+        volume = get_volume_sql(str(ctx.guild.id))
+        if is_niconico:
+            player, niconico = await NicoNicoDLSource.from_url(
+                url, log=env=="dev", volume=volume)
+        else:
+            player = await YTDLSource.from_url(url,loop=client.loop,stream=True,volume=volume)
+        guild_table[ctx.guild.id]["player"] = player
+
+        if first_seek:
+            player.original.seek(**ffmpeg_stream_options, seek_time=first_seek)
+        #player.original.wait_buffer()
+        await awaitable_voice_client_play(ctx.guild.voice_client.play, player,
+                                          client.loop)
+
+        if is_niconico:
+            niconico.close()
+        return False
+    except BaseException as error:
+        traceback.print_exc()
+        print(url)
+        await ctx.channel.send("再生不可のためスキップします。")
         return True
 
 async def playlist_queue(ctx, movie_infos_list):
@@ -445,7 +649,8 @@ async def playlist_queue(ctx, movie_infos_list):
             current_info = data['music_queue'][0]
             is_error = await play_music(ctx,
                                 current_info.get('url'),
-                                first_seek=current_info.get('first_seek'))
+                                first_seek=current_info.get('first_seek'),
+                                opus=current_info.get('opus'))
             if is_error:
                 data['music_queue'].pop(0)
                 continue
@@ -499,9 +704,7 @@ async def play_live_queue(ctx, movie_infos):
             if not data or not data['music_queue']:
                 return
             current_info = data['music_queue'][0]
-            is_error = await play_music(ctx,
-                             current_info.get('url'),
-                             first_seek=current_info.get('first_seek'))
+            is_error = await play_music(ctx,current_info.get('url'),first_seek=current_info.get('first_seek'),opus=current_info.get('opus'))
             if is_error:
                 data['music_queue'].pop(0)
                 continue
@@ -566,6 +769,7 @@ async def play_queue(ctx, movie_infos):
 
     if queue:
         queue.extend(movie_infos)
+
     else:
         guild_table[ctx.guild.id] = {
             "has_loop": False,
@@ -582,17 +786,13 @@ async def play_queue(ctx, movie_infos):
             if not data or not data['music_queue']:
                 return
             current_info = data['music_queue'][0]
-            is_error = await play_music(ctx,
-                             current_info.get('url'),
-                             first_seek=current_info.get('first_seek'))
+            is_error = await play_music(ctx,current_info.get('url'),first_seek=current_info.get('first_seek'),opus=current_info.get('opus'))
             if is_error:
                 data['music_queue'].pop(0)
                 continue
 
             has_loop = guild_table.get(ctx.guild.id, {}).get('has_loop')
-            has_loop_queue = guild_table.get(ctx.guild.id,
-                                             {}).get('has_loop_queue')
-
+            has_loop_queue = guild_table.get(ctx.guild.id,{}).get('has_loop_queue')
             if not has_loop:
                 x = data['music_queue'].pop(0)
                 if has_loop_queue:
@@ -611,6 +811,7 @@ async def stop(ctx):
     ctx.guild.voice_client.stop()
 
     await ctx.channel.send("スキップしました。")
+
 
 async def list_show(ctx):
     queue = guild_table.get(ctx.guild.id, {}).get('music_queue')
@@ -643,19 +844,21 @@ async def show_queue(ctx):
         queue_embed = discord.Embed()
         queue_embed.set_thumbnail(url=queue[0]["image_url"])
         total_time = sum([to_total_second(x["time"]) for x in queue])
-        for i, x in enumerate(queue[:20]):
+        for i, x in enumerate(queue):
             title = x["title"]
             url = x["url"]
             t = x["time"]
             author = x["author"]
-            name = "__Now Playing:__" if i == 0 else "__Up Next:__" if i == 1 else "\u200b"
-            queue_embed.add_field(
-                name=name,
-                value=
-                f"`{i + 1}.`[{title}]({url})|`{get_timestr(t)} Requested by: {author.display_name}`",
-                inline=False)
+            name = "__Now Playing:__" if i == 0 else "__Up Next:__" if i == 1 else  "__End Queue:__" if i+1==len(queue) else "\u200b"
+            if i<20 or i+1==len(queue):
+                queue_embed.add_field(
+                    name=name,
+                    value=f"`{i + 1}.`[{title}]({url})|`{get_timestr(t)} Requested by: {author.display_name}`",inline=False)
         player = guild_table.get(ctx.guild.id, {}).get('player')
-        current_total_time = int(player.original.total_milliseconds / 1000)
+        try:
+            current_total_time = int(player.original.total_milliseconds / 1000)
+        except:
+            current_total_time = int(player.total_milliseconds / 1000)
         total_time -= current_total_time
         queue_embed.add_field(
             name="\u200b", value=f"残り時間: `{get_timestr(to_time(total_time))}`")
@@ -677,7 +880,10 @@ async def show_now_playing(ctx):
         url = queue[0]["url"]
         t = queue[0]["time"]
         author = queue[0]["author"]
-        current_time = to_time(player.original.total_milliseconds / 1000)
+        try:
+            current_time = to_time(player.original.total_milliseconds / 1000)
+        except:
+            current_time = to_time(player.total_milliseconds / 1000)
         current_time_str = get_timestr(current_time)
         end_time_str = get_timestr(t)
         movie_embed = discord.Embed()
@@ -710,15 +916,24 @@ async def seek(ctx, t):
     if ctx.guild.voice_client is None:
         await ctx.channel.send("接続していません。")
         return
-
+    stream = get_stream_sql(str(ctx.guild.id))
     player = guild_table.get(ctx.guild.id, {}).get('player')
     if player:
         ctx.guild.voice_client.pause()
         try:
-            player.original.seek(**ffmpeg_options, seek_time=t)
-            player.original.wait_buffer()
+            if stream:
+                player.original.seek(**ffmpeg_stream_options, seek_time=t)
+            else:
+                player.original.seek(**ffmpeg_options, seek_time=t)
+            #player.original.wait_buffer()
         except:
-            await ctx.channel.send("無効な形式です。")
+            try:
+                if stream:
+                    player.seek(**ffmpeg_stream_options, seek_time=t)
+                else:
+                    player.seek(**ffmpeg_options, seek_time=t)
+            except:
+                await ctx.channel.send("無効な形式です。")
         finally:
             ctx.guild.voice_client.resume()
     else:
@@ -729,13 +944,22 @@ async def rewind(ctx, t):
     if ctx.guild.voice_client is None:
         await ctx.channel.send("接続していません。")
         return
-
+    stream = get_stream_sql(str(ctx.guild.id))
     player = guild_table.get(ctx.guild.id, {}).get('player')
     if player:
         try:
-            player.original.rewind(**ffmpeg_options, rewind_time=t)
+            if stream:
+                player.original.rewind(**ffmpeg_stream_options, rewind_time=t)
+            else:
+                player.original.rewind(**ffmpeg_options, rewind_time=t)
         except:
-            await ctx.channel.send("無効な形式です。")
+            try:
+                if stream:
+                    player.rewind(**ffmpeg_stream_options, rewind_time=t)
+                else:
+                    player.rewind(**ffmpeg_options, rewind_time=t)
+            except:
+                await ctx.channel.send("無効な形式です。")
     else:
         await ctx.channel.send("現在再生していません。")
 
@@ -863,9 +1087,12 @@ async def resume(ctx):
 
     await ctx.channel.send("再生を再開しました。")
 
-async def playlist(ctx, args, add_infos={}):
+async def playlist(ctx, args, opus=False, add_infos={}):
     if ctx.author.voice is None:
         await ctx.channel.send("あなたはボイスチャンネルに接続していません。")
+        return
+    if args[1].startswith("https://www.nicovideo.jp/"):
+        await ctx.channel.send("このコマンドはniconicoに対応してません。")
         return
     await ctx.channel.send("プレイリストを作成中です。しばらくお待ちください。")
     #progress_bar= await ctx.channel.send('進捗:0%')
@@ -873,6 +1100,7 @@ async def playlist(ctx, args, add_infos={}):
         pattern = re.compile(r'(?<=list=)[^?]*')
         listid=pattern.search(args[1])
         movie_infos_list = []
+        movie_infos_append = movie_infos_list.append
         movie_infos = None
         #response = requests.get('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId='+str(listid.group())+'&key='+str(youtube_token)+'&maxResults=50')
         #data=response.json()
@@ -881,13 +1109,13 @@ async def playlist(ctx, args, add_infos={}):
         for data in response['items']:
             try:
                 #movie_infos=await infos_from_ytdl("https://www.youtube.com/watch?v="+str(data['snippet']['resourceId']['videoId']), client.loop)
-                movie_infos=await infos_youtube_api(data)
+                movie_infos=await infos_youtube_api(data,opus)
             except:
                 await ctx.channel.send("動画情報取得中に一部エラーが発生しました。再生できない動画が含まれているようです。")
             for info in movie_infos:
                 info["author"] = ctx.author
                 info.update(add_infos)
-            movie_infos_list.append(movie_infos)
+                movie_infos_append(movie_infos)
         try:
             response['nextPageToken']
             while(1):
@@ -896,13 +1124,13 @@ async def playlist(ctx, args, add_infos={}):
                 for data in response['items']:
                     try:
                         #movie_infos=await infos_from_ytdl("https://www.youtube.com/watch?v="+str(data2['snippet']['resourceId']['videoId']), client.loop)
-                        movie_infos=await infos_youtube_api(data)
+                        movie_infos=await infos_youtube_api(data,opus)
                     except:
                         await ctx.channel.send("動画情報取得中に一部エラーが発生しました。再生できない動画が含まれているようです。")
                     for info in movie_infos:
                         info["author"] = ctx.author
                         info.update(add_infos)
-                    movie_infos_list.append(movie_infos)
+                        movie_infos_append(movie_infos)
                 try:
                     response['nextPageToken']
                 except:
@@ -914,6 +1142,9 @@ async def playlist(ctx, args, add_infos={}):
 async def live(ctx, args, add_infos={}):
     if ctx.author.voice is None:
         await ctx.channel.send("あなたはボイスチャンネルに接続していません。")
+        return
+    if args[1].startswith("https://www.nicovideo.jp/"):
+        await ctx.channel.send("このコマンドはniconicoに対応してません。")
         return
     if re.match("https?://www.youtube.com.*", args[1]) or re.match("https?://youtube.com.*", args[1]):
         try:
@@ -929,7 +1160,7 @@ async def live(ctx, args, add_infos={}):
             return
         await play_live_queue(ctx, movie_infos)
 
-async def play(ctx, args, add_infos={}):
+async def play(ctx, args, opus=False, add_infos={}):
     optionbases = [x for x in args if x.startswith('-')]
     args = [i for i in args if i not in optionbases]
     options = ''.join([x[1:] for x in optionbases])
@@ -956,7 +1187,9 @@ async def play(ctx, args, add_infos={}):
     args[1] = result[0]
 
     movie_infos = None
-
+    if opus & args[1].startswith("https://www.nicovideo.jp/"):
+        await ctx.channel.send("このコマンドはniconicoに対応してません。")
+        return
     try:
         if args[1].startswith("https://www.nicovideo.jp/search"):
             movie_infos = niconico_infos_from_search(args[1], **slice_dict)
@@ -969,9 +1202,9 @@ async def play(ctx, args, add_infos={}):
         elif args[1].startswith("https://www.nicovideo.jp/watch"):
             movie_infos = niconico_infos_from_video_url(args[1])
         elif re.match("https?://.*", args[1]):
-            movie_infos = await infos_from_ytdl(args[1], client.loop)
+            movie_infos = await infos_from_ytdl(args[1], client.loop, opus)
         elif "y" in options:
-            movie_infos = await infos_from_ytdl(keyword, client.loop)
+            movie_infos = await infos_from_ytdl(keyword, client.loop, opus)
         elif "t" in options:
             movie_infos = niconico_infos_from_search(
                 get_tag_url(keyword, sort), **slice_dict)
@@ -983,12 +1216,10 @@ async def play(ctx, args, add_infos={}):
             info.update(add_infos)
     except:
         traceback.print_exc()
-        print(args)
         await ctx.channel.send("検索に失敗しました。")
         return
     print(movie_infos)
     await play_queue(ctx, movie_infos)
-
 
 async def set_prefix(ctx, key, value):
     try:
@@ -1008,19 +1239,42 @@ async def set_volume(ctx, key, value):
         set_volume_sql(key, volume)
         client_id = client.user.id
         bot_name = client.user.name
-        await set_nick(ctx.guild, client_id, bot_name, force=True)
+        #await set_nick(ctx.guild, client_id, bot_name, force=True)
         await ctx.channel.send("音量を変更しました。")
     except:
         traceback.print_exc()
         await ctx.channel.send("音量の変更に失敗しました")
 
-
+async def set_stream(ctx, key, value):
+    try:
+        if value==1:
+            set_stream_sql(key, True)
+            await ctx.channel.send("ストリーム再生を有効化しました。")
+        elif value==0:
+            set_stream_sql(key, False)
+            await ctx.channel.send("ストリーム再生を無効化しました。")
+        else:
+            await ctx.channel.send("0か1を指定してください。")
+            return
+    except:
+        traceback.print_exc()
+        await ctx.channel.send("ストリーム再生の変更に失敗しました")
+async def info_stream(ctx):
+    try:
+        stream = get_stream_sql(str(ctx.guild.id))
+        if stream:
+            await ctx.channel.send("ストリーム再生は有効です。")
+        else:
+            await ctx.channel.send("ストリーム再生は無効です。")
+    except:
+        traceback.print_exc()
+        await ctx.channel.send("ストリーム再生の確認に失敗しました")
 async def delete_setting(ctx, key):
     try:
         delete_setting_sql(key)
         client_id = client.user.id
         bot_name = client.user.name
-        await set_nick(ctx.guild, client_id, bot_name, force=True)
+        #await set_nick(ctx.guild, client_id, bot_name, force=True)
         await ctx.channel.send("全ての設定を削除しました。")
     except:
         traceback.print_exc()
@@ -1080,7 +1334,7 @@ def to_time(total_second):
     total_second %= 60
     second = total_second
 
-    return datetime.datetime(year=datetime.MINYEAR,
+    return datetime(year=1,
                              month=1,
                              day=int(day) + 1,
                              hour=int(hour),
@@ -1193,7 +1447,7 @@ def niconico_infos_from_video_url(url):
     return movie_infos
 
 
-async def infos_from_ytdl(url, loop=None):
+async def infos_from_ytdl(url, loop=None, opus=False):
     movie_infos = []
     loop = loop or asyncio.get_event_loop()
     data = await loop.run_in_executor(
@@ -1209,13 +1463,14 @@ async def infos_from_ytdl(url, loop=None):
         "url": url,
         "title": data["title"],
         "image_url": image_url,
-        "time": to_time(int(data["duration"]))
+        "time": to_time(int(data["duration"])),
+        "opus":opus
     }
     movie_infos.append(info)
-
+    print(movie_infos)
     return movie_infos
 
-async def infos_youtube_api(data):
+async def infos_youtube_api(data,opus):
     movie_infos = []
     part = ['snippet', 'contentDetails']
     response2 = youtube.videos().list(part=part, id=data['snippet']['resourceId']['videoId']).execute()
@@ -1229,10 +1484,11 @@ async def infos_youtube_api(data):
         "url": 'https://www.youtube.com/watch?v='+str(data['snippet']['resourceId']['videoId']),
         "title": data2['snippet']['title'],
         "image_url": data2['snippet']['thumbnails']['default']['url'],
-        "time": to_time(datetime.timedelta(**kwargs).total_seconds())
+        "time": to_time(timedelta(**kwargs).total_seconds()),
+        "opus":opus
         }
-    movie_infos.append(info)
-    print(movie_infos)
+        movie_infos.append(info)
+        print(movie_infos)
     return movie_infos
 
 async def live_infos_youtube_api(liveid):
@@ -1244,7 +1500,8 @@ async def live_infos_youtube_api(liveid):
         "url": 'https://www.youtube.com/watch?v='+str(liveid),
         "title": data2['snippet']['title'],
         "image_url": data2['snippet']['thumbnails']['default']['url'],
-        "time": to_time(1)
+        "time": to_time(1),
+        "opus":False
         }
         movie_infos.append(info)
     return movie_infos
@@ -1288,18 +1545,20 @@ async def on_message(ctx):
         await leave(ctx)
     elif any([x == args[0] for x in ["p"]]) and len(args) >= 2:
         await play(ctx, args)
+    elif any([x == args[0] for x in ["pd"]]) and len(args) >= 2:
+        await play(ctx, args, True)
     elif any([x == args[0] for x in ["pl"]]) and len(args) >= 2:
         await playlist(ctx, args)
+    elif any([x == args[0] for x in ["pdl"]]) and len(args) >= 2:
+        await playlist(ctx, args, True)
     elif any([x == args[0] for x in ["live"]]) and len(args) >= 2:
         await live(ctx, args)
     elif args[0] == "py" and len(args) >= 2:
         args.insert(1, "-y")
-
         await play(ctx, args)
     elif args[0] == "pseek" and len(args) >= 3:
         first_seek = args[1]
         del (args[1])
-
         await play(ctx, args, add_infos={"first_seek": first_seek})
     elif args[0] == "q":
         await show_queue(ctx)
@@ -1319,6 +1578,10 @@ async def on_message(ctx):
         await loop(ctx)
     elif args[0] == "loopqueue":
         await loopqueue(ctx)
+    elif args[0] == "set_stream" and len(args) >= 2:
+        await set_stream(ctx, key, int(args[1]))
+    elif args[0] == "info_stream":
+        await info_stream(ctx)
     elif args[0] == "set_volume" and len(args) >= 2:
         await set_volume(ctx, key, args[1])
     elif args[0] == "set_prefix" and len(args) >= 2:
@@ -1355,18 +1618,23 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 
 
 
+
+
 table_name = 'guilds'
 defalut_volume = 0.1
+defalut_stream = True
 guild_table = {}
 ssl._create_default_https_context = ssl._create_unverified_context
 token = os.environ['SMILEMUSIC_DISCORD_TOKEN']
 defalut_prefix = os.environ['SMILEMUSIC_PREFIX']
 env = os.environ['SMILEMUSIC_ENV']
+
 youtube_token=os.environ['YOUTUBE_TOKEN']
 YOUTUBE_API_SERVICE_NAME = 'youtube'
 YOUTUBE_API_VERSION = 'v3'
 YOUTUBE_API_KEY = os.environ['YOUTUBE_TOKEN']
 youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION,developerKey=YOUTUBE_API_KEY)
+
 if env != "dev":
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
 else:
