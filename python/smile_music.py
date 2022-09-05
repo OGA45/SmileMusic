@@ -1,4 +1,5 @@
 import asyncio
+from itertools import product
 import json
 import re
 import os
@@ -27,6 +28,12 @@ import traceback
 from discord.opus import Encoder as OpusEncoder
 from io import BufferedReader
 from googleapiclient.discovery import build
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+import subprocess
+from itertools import count
+import nest_asyncio
+nest_asyncio.apply()
 
 log = logging.getLogger(__name__)
 # Suppress noise about console usage from errors
@@ -41,17 +48,17 @@ ytdl_format_options = {
     'ignoreerrors': False,
     'logtostderr': False,
     'quiet': True,
-    'no_warnings': True,
+    #'no_warnings': True,
     'default_search': 'auto',
     'source_address':
     '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
-    'buffer_size':'16K',
-    #'http_chunk_size':'10M',
-    'hls_use_mpegts':True,
+    'buffer-size':'16K',
+    'http-chunk-size':'10M',
+    'hls_use-mpegts':True,
     'keep_fragments':True,
     'x':True,
-    'audio_format':'opus',
-    'audio_quality':'128K',
+    'audio-format':'opus',
+    'audio-quality':'128K',
     'user_agent':"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:47.0) Gecko/20100101 Firefox/47.0",
 }
 
@@ -65,6 +72,13 @@ ffmpeg_options = {
 ffmpeg_stream_options = {
     'before_options':
     '-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options':
+    '-threads 20'
+}
+
+ffmpeg_livestream_options = {
+    'before_options':
+    '-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -http_persistent 1',
     'options':
     '-threads 20'
 }
@@ -96,7 +110,6 @@ ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
 client = discord.Client(intents=discord.Intents.all())
 
-
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.1):
         super().__init__(source, volume)
@@ -107,7 +120,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.url = data.get('url')
 
     @classmethod
-    async def from_url(cls, url, *, loop=None, stream=False, volume=0.1):
+    async def from_url(cls, url, *, loop=None, stream=False, volume=0.1, live=False):
         loop = loop or asyncio.get_event_loop()
         data = await loop.run_in_executor(
             None, lambda: ytdl.extract_info(url, download=not stream))
@@ -117,11 +130,29 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         if stream:
-            source = OriginalFFmpegPCMAudio(filename, **ffmpeg_stream_options)
+            if live:
+                source = OriginalFFmpegPCMAudio(filename, **ffmpeg_livestream_options)
+            else:
+                source = OriginalFFmpegPCMAudio(filename, **ffmpeg_stream_options)
         else:
             source = OriginalFFmpegPCMAudio(filename, **ffmpeg_options)
         return cls(source, data=data, volume=volume)
 
+class SpSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, volume=0.1):
+        super().__init__(source, volume)
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, volume=0.1):
+        loop = loop or asyncio.get_event_loop()
+        data=sp.track(url)
+        try:
+            subprocess.run(['spotdl '+url+' --path-template {title}.{ext} --output-format opus'],shell=True)
+        except:
+            subprocess.run(['spotdl '+str("'"+data["name"]+"'")],shell=True)
+        filename = data["name"]+".opus"
+        source = OriginalFFmpegPCMAudio(filename, **ffmpeg_options)
+        return cls(source, volume=volume)
 
 class NicoNicoDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, url, volume=0.1):
@@ -137,7 +168,6 @@ class NicoNicoDLSource(discord.PCMVolumeTransformer):
 
         source = OriginalFFmpegPCMAudio(stream_url, **ffmpeg_stream_options)
         return (cls(source, url=stream_url, volume=volume), niconico)
-
 
 class OriginalFFmpegOpusAudio(discord.FFmpegOpusAudio):
     def __init__(self,
@@ -175,6 +205,14 @@ class OriginalFFmpegOpusAudio(discord.FFmpegOpusAudio):
 
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         return cls(filename, **ffmpeg_options) if not stream else cls(filename, **ffmpeg_stream_options)
+
+    @classmethod
+    async def from_spotify_url(cls,url, *, loop=None,):
+        loop = loop or asyncio.get_event_loop()
+        subprocess.run(['spotdl '+url+' --path-template {title}.{ext} --output-format opus'],shell=True)
+        data=sp.track(url)
+        filename = data["name"]+".opus"
+        return cls(filename, **ffmpeg_options)
 
     def read(self):
         ret = super().read()
@@ -486,20 +524,36 @@ async def join(ctx):
     if ctx.author.voice is None:
         await ctx.channel.send("あなたはボイスチャンネルに接続していません。")
         return
-
     await ctx.author.voice.channel.connect()
-    await ctx.channel.send("接続しました。")
+    if ctx.author.voice is None:
+        await ctx.channel.send("接続できませんでした。")
+    else:
+        await ctx.channel.send("接続しました。")
 
 
 async def leave(ctx):
     if ctx.guild.voice_client is None:
         await ctx.channel.send("接続していません。")
         return
-
     guild_table.pop(ctx.guild.id, None)
     await ctx.guild.voice_client.disconnect()
-    await ctx.channel.send("切断しました。")
+    if ctx.guild.voice_client is not None:
+        ctx.guild.voice_client.cleanup()
+    if ctx.guild.voice_client is not None:
+        await ctx.channel.send("切断に失敗しました。管理者にお問い合わせください。")
+    else:
+        await ctx.channel.send("切断しました。")
 
+async def clean(ctx):
+    await ctx.channel.send("クリーンアップします。")
+    try:
+        if ctx.guild.voice_client is not None:
+            guild_table.pop(ctx.guild.id, None)
+            await ctx.guild.voice_client.disconnect()
+        await ctx.guild.voice_client.cleanup()
+    except:
+        await ctx.channel.send("異常終了しました。改善されない場合強制的に切断させてください。")
+    await ctx.channel.send("終了しました。改善されない場合強制的に切断させてください。")
 
 def awaitable_voice_client_play(func, player, loop):
     f = asyncio.Future()
@@ -511,12 +565,17 @@ def awaitable_voice_client_play(func, player, loop):
 async def play_music(ctx, url, first_seek=None, opus=False):
     try:
         is_niconico = url.startswith("https://www.nicovideo.jp/")
+        is_spotify=url.startswith("https://open.spotify.com/")
         volume = get_volume_sql(str(ctx.guild.id))
         stream = get_stream_sql(str(ctx.guild.id))
         if is_niconico:
             player, niconico = await NicoNicoDLSource.from_url(url, log=env=="dev", volume=volume)
+        elif is_spotify:
+            if not opus:
+                player = await SpSource.from_url(url,loop=client.loop)
+            else:
+                player = await OriginalFFmpegOpusAudio.from_spotify_url(url,loop=client.loop)
         else:
-            data = guild_table.get(ctx.guild.id)
             if not opus:
                 player = await YTDLSource.from_url(url,loop=client.loop, stream=stream)
             else:
@@ -525,16 +584,20 @@ async def play_music(ctx, url, first_seek=None, opus=False):
 
         if first_seek:
             try:
-                if stream:
-                    player.original.seek(**ffmpeg_stream_options, seek_time=first_seek)
-                else:
+                if is_spotify or not stream:
                     player.original.seek(**ffmpeg_options, seek_time=first_seek)
-            except:
-                if stream:
-                    player.seek(**ffmpeg_stream_options, seek_time=first_seek)
                 else:
+                    player.original.seek(**ffmpeg_stream_options, seek_time=first_seek)
+            except:
+                if is_spotify or not stream:
                     player.seek(**ffmpeg_options, seek_time=first_seek)
-        #player.original.wait_buffer()
+                else:
+                    player.seek(**ffmpeg_stream_options, seek_time=first_seek)
+            try:
+                player.original.wait_buffer()
+            except:
+                player.wait_buffer()
+
         await awaitable_voice_client_play(ctx.guild.voice_client.play, player,
                                           client.loop)
 
@@ -543,33 +606,23 @@ async def play_music(ctx, url, first_seek=None, opus=False):
         return False
     except BaseException as error:
         traceback.print_exc()
-        print(url)
         await ctx.channel.send("再生不可のためスキップします。")
         return True
 
 async def play_live_music(ctx, url, first_seek=None):
     try:
-        is_niconico = url.startswith("https://www.nicovideo.jp/")
         volume = get_volume_sql(str(ctx.guild.id))
-        if is_niconico:
-            player, niconico = await NicoNicoDLSource.from_url(
-                url, log=env=="dev", volume=volume)
-        else:
-            player = await YTDLSource.from_url(url,loop=client.loop,stream=True,volume=volume)
+        player = await YTDLSource.from_url(url,loop=client.loop,stream=True,volume=volume,live=True)
         guild_table[ctx.guild.id]["player"] = player
 
         if first_seek:
             player.original.seek(**ffmpeg_stream_options, seek_time=first_seek)
-        #player.original.wait_buffer()
+        player.original.wait_buffer()
         await awaitable_voice_client_play(ctx.guild.voice_client.play, player,
                                           client.loop)
-
-        if is_niconico:
-            niconico.close()
         return False
     except BaseException as error:
         traceback.print_exc()
-        print(url)
         await ctx.channel.send("再生不可のためスキップします。")
         return True
 
@@ -585,56 +638,18 @@ async def playlist_queue(ctx, movie_infos_list):
         return
     if ctx.guild.voice_client is None:
         await join(ctx)
-    for movie_infos in movie_infos_list:
+    for info in movie_infos_list:
+        infos=[]
+        infos.append(info)
         queue = guild_table.get(ctx.guild.id, {}).get('music_queue')
-        start_index = len(queue) if queue else 0
-        print(movie_infos)
-        info = movie_infos[0]
-        author = info["author"]
-        movie_embed = discord.Embed()
-        movie_embed.set_thumbnail(url=info["image_url"])
-        infos_len = len(movie_infos)
-        if infos_len <= 1:
-            title = info["title"]
-            url = info["url"]
-            t = info["time"]
-            movie_embed.add_field(name="\u200b",
-                                value=f"[{title}]({url})",
-                                inline=False)
-            movie_embed.add_field(name="再生時間", value=f"{get_timestr(t)}")
-            movie_embed.add_field(name="キューの順番", value=f"{start_index + 1}")
-        else:
-            for x in movie_infos[:min(3, infos_len - 1)]:
-                title = x["title"]
-                url = x["url"]
-                movie_embed.add_field(name="\u200b",
-                                    value=f"[{title}]({url})",
-                                    inline=False)
-            movie_embed.add_field(name="\u200b", value=f"・・・", inline=False)
-            last_info = movie_infos[-1]
-            title = last_info["title"]
-            url = last_info["url"]
-            movie_embed.add_field(name="\u200b",
-                                value=f"[{title}]({url})",
-                                inline=False)
-            total_datetime = get_timestr(
-                to_time(sum([to_total_second(x["time"]) for x in movie_infos])))
-            movie_embed.add_field(name="再生時間", value=f"{total_datetime}")
-            movie_embed.add_field(
-                name="キューの順番",
-                value=f"{start_index + 1}...{start_index + infos_len}")
-            movie_embed.add_field(name="曲数", value=f"{infos_len}")
-        movie_embed.set_author(name=f"{author.display_name} added",
-                            icon_url=author.avatar_url)
-        #await ctx.channel.send(embed=movie_embed)
         if queue:
-            queue.extend(movie_infos)
+            queue.extend(infos)
         else:
             guild_table[ctx.guild.id] = {
                 "has_loop": False,
                 "has_loop_queue": False,
                 "player": None,
-                "music_queue": movie_infos
+                "music_queue": infos
             }
     await list_show(ctx)
     if play:
@@ -675,6 +690,7 @@ async def play_live_queue(ctx, movie_infos):
     start_index = len(queue) if queue else 0
 
     info = movie_infos[0]
+    movie_info_log(info)
     author = info["author"]
     movie_embed = discord.Embed()
     movie_embed.set_thumbnail(url=info["image_url"])
@@ -704,7 +720,7 @@ async def play_live_queue(ctx, movie_infos):
             if not data or not data['music_queue']:
                 return
             current_info = data['music_queue'][0]
-            is_error = await play_music(ctx,current_info.get('url'),first_seek=current_info.get('first_seek'),opus=current_info.get('opus'))
+            is_error = await play_live_music(ctx,current_info.get('url'),first_seek=current_info.get('first_seek'))
             if is_error:
                 data['music_queue'].pop(0)
                 continue
@@ -729,6 +745,7 @@ async def play_queue(ctx, movie_infos):
     start_index = len(queue) if queue else 0
 
     info = movie_infos[0]
+    movie_info_log(info)
     author = info["author"]
     movie_embed = discord.Embed()
     movie_embed.set_thumbnail(url=info["image_url"])
@@ -798,6 +815,12 @@ async def play_queue(ctx, movie_infos):
                 if has_loop_queue:
                     data['music_queue'].append(x)
 
+def movie_info_log(movie_info):
+    print("サーバー名:"+str(movie_info["author"].guild))
+    print("ユーザー名:"+str(movie_info["author"]))
+    print("URL:"+movie_info["url"])
+    print("タイトル:"+movie_info["title"])
+    print("時刻:"+str(datetime.now()))
 
 async def stop(ctx):
     if ctx.guild.voice_client is None:
@@ -925,7 +948,7 @@ async def seek(ctx, t):
                 player.original.seek(**ffmpeg_stream_options, seek_time=t)
             else:
                 player.original.seek(**ffmpeg_options, seek_time=t)
-            #player.original.wait_buffer()
+            player.original.wait_buffer()
         except:
             try:
                 if stream:
@@ -1094,49 +1117,53 @@ async def playlist(ctx, args, opus=False, add_infos={}):
     if args[1].startswith("https://www.nicovideo.jp/"):
         await ctx.channel.send("このコマンドはniconicoに対応してません。")
         return
-    await ctx.channel.send("プレイリストを作成中です。しばらくお待ちください。")
-    #progress_bar= await ctx.channel.send('進捗:0%')
     if re.match("https?://www.youtube.com.*", args[1]) or re.match("https?://youtube.com.*", args[1]):
+        await ctx.channel.send("プレイリストを作成中です。しばらくお待ちください。")
         pattern = re.compile(r'(?<=list=)[^?]*')
         listid=pattern.search(args[1])
-        movie_infos_list = []
-        movie_infos_append = movie_infos_list.append
-        movie_infos = None
-        #response = requests.get('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId='+str(listid.group())+'&key='+str(youtube_token)+'&maxResults=50')
-        #data=response.json()
+        responses=[]
+        movie_infos_list=[]
         response = youtube.playlistItems().list(part='snippet',playlistId=listid.group(),maxResults=50).execute()
-        sums=response['pageInfo']['totalResults']
-        for data in response['items']:
-            try:
-                #movie_infos=await infos_from_ytdl("https://www.youtube.com/watch?v="+str(data['snippet']['resourceId']['videoId']), client.loop)
-                movie_infos=await infos_youtube_api(data,opus)
-            except:
-                await ctx.channel.send("動画情報取得中に一部エラーが発生しました。再生できない動画が含まれているようです。")
-            for info in movie_infos:
-                info["author"] = ctx.author
-                info.update(add_infos)
-                movie_infos_append(movie_infos)
+        responses.append(response)
         try:
-            response['nextPageToken']
-            while(1):
+            fast_token=response['nextPageToken']
+            for num in count():
                 response = youtube.playlistItems().list(part='snippet',playlistId=listid.group(),maxResults=50,pageToken=response['nextPageToken']).execute()
-                #data=response.json()
-                for data in response['items']:
-                    try:
-                        #movie_infos=await infos_from_ytdl("https://www.youtube.com/watch?v="+str(data2['snippet']['resourceId']['videoId']), client.loop)
-                        movie_infos=await infos_youtube_api(data,opus)
-                    except:
-                        await ctx.channel.send("動画情報取得中に一部エラーが発生しました。再生できない動画が含まれているようです。")
-                    for info in movie_infos:
-                        info["author"] = ctx.author
-                        info.update(add_infos)
-                        movie_infos_append(movie_infos)
+                try:
+                    if fast_token==response['nextPageToken']:
+                        break
+                except:
+                    pass
+                responses.append(response)
                 try:
                     response['nextPageToken']
                 except:
                     break
         except:
-            print("次ページなし")
+            pass
+        #for data in responses:
+        #    for items in data['items']:
+        #        ids.append(items['snippet']['resourceId']['videoId'])
+        #    movie_infos_list.extend(infos_youtube_api(ctx,ids,opus))#ここを非同期で回したい
+        #    ids=[]
+        loop = client.loop
+        movie_infos_lists=loop.run_until_complete(infos_youtube_api_v2_n_async(ctx,responses,opus))
+        for info in movie_infos_lists:
+            movie_infos_list.extend(info)
+        await playlist_queue(ctx, movie_infos_list)
+    elif re.match("https://open.spotify.com/album/.*", args[1]):
+        await ctx.channel.send("プレイリストを作成中です。しばらくお待ちください。")
+        movie_infos_list = await infos_spotify_album(args[1],opus)
+        for info in movie_infos_list:
+            info["author"] = ctx.author
+            info.update(add_infos)
+        await playlist_queue(ctx, movie_infos_list)
+    elif re.match("https://open.spotify.com/playlist/.*", args[1]):
+        await ctx.channel.send("プレイリストを作成中です。しばらくお待ちください。")
+        movie_infos_list = await infos_spotify_playlist(args[1],opus)
+        for info in movie_infos_list:
+            info["author"] = ctx.author
+            info.update(add_infos)
         await playlist_queue(ctx, movie_infos_list)
 
 async def live(ctx, args, add_infos={}):
@@ -1158,9 +1185,20 @@ async def live(ctx, args, add_infos={}):
             traceback.print_exc()
             await ctx.channel.send("検索に失敗しました。")
             return
-        await play_live_queue(ctx, movie_infos)
+    else:
+        movie_infos = await infos_from_ytdl(args[1])
+        if movie_infos is False:
+            await ctx.channel.send("現在LIVE中ではないようです。再生に失敗しました。")
+            return
+        for infos in movie_infos:
+            infos["author"] = ctx.author
+            infos.update(add_infos)
+    await play_live_queue(ctx, movie_infos)
 
 async def play(ctx, args, opus=False, add_infos={}):
+    if ctx.author.voice is None:
+        await ctx.channel.send("あなたはボイスチャンネルに接続していません。")
+        return
     optionbases = [x for x in args if x.startswith('-')]
     args = [i for i in args if i not in optionbases]
     options = ''.join([x[1:] for x in optionbases])
@@ -1190,6 +1228,9 @@ async def play(ctx, args, opus=False, add_infos={}):
     if opus & args[1].startswith("https://www.nicovideo.jp/"):
         await ctx.channel.send("このコマンドはniconicoに対応してません。")
         return
+    elif re.match("https://open.spotify.com/track/.*", args[1]):
+        await ctx.channel.send("このコマンドはSpotifyに対応してません。")
+        return
     try:
         if args[1].startswith("https://www.nicovideo.jp/search"):
             movie_infos = niconico_infos_from_search(args[1], **slice_dict)
@@ -1201,6 +1242,8 @@ async def play(ctx, args, opus=False, add_infos={}):
             movie_infos = niconico_infos_from_mylist(args[1], **slice_dict)
         elif args[1].startswith("https://www.nicovideo.jp/watch"):
             movie_infos = niconico_infos_from_video_url(args[1])
+        elif re.match("https://open.spotify.com/track/.*", args[1]):
+            movie_infos = await infos_spotify_track(args[1],opus)
         elif re.match("https?://.*", args[1]):
             movie_infos = await infos_from_ytdl(args[1], client.loop, opus)
         elif "y" in options:
@@ -1216,9 +1259,8 @@ async def play(ctx, args, opus=False, add_infos={}):
             info.update(add_infos)
     except:
         traceback.print_exc()
-        await ctx.channel.send("検索に失敗しました。")
+        await ctx.channel.send("検索に失敗しました。対応していないサイトの可能性があります。")
         return
-    print(movie_infos)
     await play_queue(ctx, movie_infos)
 
 async def set_prefix(ctx, key, value):
@@ -1231,7 +1273,6 @@ async def set_prefix(ctx, key, value):
     except:
         traceback.print_exc()
         await ctx.channel.send("prefixの変更に失敗しました")
-
 
 async def set_volume(ctx, key, value):
     try:
@@ -1259,6 +1300,7 @@ async def set_stream(ctx, key, value):
     except:
         traceback.print_exc()
         await ctx.channel.send("ストリーム再生の変更に失敗しました")
+
 async def info_stream(ctx):
     try:
         stream = get_stream_sql(str(ctx.guild.id))
@@ -1269,6 +1311,7 @@ async def info_stream(ctx):
     except:
         traceback.print_exc()
         await ctx.channel.send("ストリーム再生の確認に失敗しました")
+
 async def delete_setting(ctx, key):
     try:
         delete_setting_sql(key)
@@ -1279,7 +1322,6 @@ async def delete_setting(ctx, key):
     except:
         traceback.print_exc()
         await ctx.channel.send("設定の削除に失敗しました")
-
 
 async def set_nick(guild, client_id, bot_name, force=False):
     try:
@@ -1296,33 +1338,29 @@ async def set_nick(guild, client_id, bot_name, force=False):
     except:
         pass
 
-
 async def help(ctx):
-    help_embed = discord.Embed(title="SmilePlayer")
+    help_embed = discord.Embed(title="ヘルプメニュー",color=0x0000ff)
     help_embed.add_field(
         name="\u200b",
         value=
-        ":white_check_mark:コマンド一覧は[こちら](https://github.com/akomekagome/SmilePlayer/blob/main/README.md)"
+        ":white_check_mark:コマンド一覧は[こちら](https://github.com/OGA45/SmileMusic/blob/main/README.md)"
     )
     help_embed.add_field(
         name="\u200b",
         value=
-        ":computer: 質問, 要望などは、[こちら](https://discord.gg/uVp6Aajqd7)のdiscordサーバーからお願いします！",
+        ":computer: 質問, 要望などは、[こちら](https://twitter.com/IsthisOga)のTwitterアカウントにお願いします。",
         inline=False)
     await ctx.channel.send(embed=help_embed)
-
 
 def get_keyword_url(keyword, sort='v'):
     urlKeyword = parse.quote(keyword)
     url = f"https://www.nicovideo.jp/search/{urlKeyword}?sort={sort}"
     return url
 
-
 def get_tag_url(keyword, sort='v'):
     urlKeyword = parse.quote(keyword)
     url = f"https://www.nicovideo.jp/tag/{urlKeyword}?sort={sort}"
     return url
-
 
 def to_time(total_second):
     total_second = int(total_second)
@@ -1341,11 +1379,9 @@ def to_time(total_second):
                              minute=int(minute),
                              second=second)
 
-
 def to_total_second(t):
 
     return (t.day - 1) * 86400 + t.hour * 3600 + t.minute * 60 + t.second
-
 
 def get_tags(url):
     r = requests.get(url)
@@ -1353,7 +1389,6 @@ def get_tags(url):
     soup = bs4.BeautifulSoup(html, "html.parser")
     soup = soup.select_one('meta[name="keywords"]')
     return soup.get("content").split(",")
-
 
 def niconico_infos_from_search(url, start=0, stop=1):
     movie_infos = []
@@ -1377,7 +1412,6 @@ def niconico_infos_from_search(url, start=0, stop=1):
         movie_infos.append(info)
 
     return movie_infos
-
 
 def niconico_infos_from_mylist(url, start=None, stop=None):
     movie_infos = []
@@ -1404,7 +1438,6 @@ def niconico_infos_from_mylist(url, start=None, stop=None):
 
     return movie_infos
 
-
 def niconico_infos_from_series(url, start=None, stop=None):
     movie_infos = []
     r = requests.get(url)
@@ -1426,7 +1459,6 @@ def niconico_infos_from_series(url, start=None, stop=None):
 
     return movie_infos
 
-
 def niconico_infos_from_video_url(url):
     movie_infos = []
     r = req.Request(url=url, headers=headers)
@@ -1446,49 +1478,130 @@ def niconico_infos_from_video_url(url):
 
     return movie_infos
 
-
 async def infos_from_ytdl(url, loop=None, opus=False):
     movie_infos = []
     loop = loop or asyncio.get_event_loop()
-    data = await loop.run_in_executor(
-        None, lambda: ytdl.extract_info(url, download=False))
-
+    try:
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+    except:
+        return False
     if 'entries' in data:
         data = data['entries'][0]
 
     thumbnails = data.get("thumbnails")
     image_url = thumbnails[0].get("url") if thumbnails else None
-
-    info = {
-        "url": url,
-        "title": data["title"],
-        "image_url": image_url,
-        "time": to_time(int(data["duration"])),
-        "opus":opus
-    }
+    try:
+        info = {
+            "url": url,
+            "title": data["title"],
+            "image_url": image_url,
+            "time": to_time(int(data["duration"])),
+            "opus":opus
+        }
+    except:
+        info = {
+            "url": url,
+            "title": data["title"],
+            "image_url": image_url,
+            "time": to_time(1),
+            "opus":False
+        }
     movie_infos.append(info)
-    print(movie_infos)
     return movie_infos
-
-async def infos_youtube_api(data,opus):
+def infos_youtube_api(ctx,data,opus,add_infos={}):
     movie_infos = []
     part = ['snippet', 'contentDetails']
-    response2 = youtube.videos().list(part=part, id=data['snippet']['resourceId']['videoId']).execute()
+    pttn_time = re.compile(r'PT(\d+H)?(\d+M)?(\d+S)?')
+    keys = ['hours', 'minutes', 'seconds']
+    response2 = youtube.videos().list(part=part, id=data).execute()
     for data2 in response2['items']:
-        pttn_time = re.compile(r'PT(\d+H)?(\d+M)?(\d+S)?')
-        keys = ['hours', 'minutes', 'seconds']
         m = pttn_time.search(data2['contentDetails']['duration'])
-        kwargs = {k: 0 if v is None else int(v[:-1])
-        for k, v in zip(keys, m.groups())}
+        kwargs = {k: 0 if v is None else int(v[:-1])for k, v in zip(keys, m.groups())}
         info = {
-        "url": 'https://www.youtube.com/watch?v='+str(data['snippet']['resourceId']['videoId']),
+        "url": 'https://www.youtube.com/watch?v='+str(data2['id']),
         "title": data2['snippet']['title'],
         "image_url": data2['snippet']['thumbnails']['default']['url'],
         "time": to_time(timedelta(**kwargs).total_seconds()),
+        "opus":opus,
+        "author":ctx.author
+        }
+        info.update(add_infos)
+        movie_infos.append(info)
+    return movie_infos
+
+async def infos_youtube_api_v2_async(ctx,data,opus):
+    loop = client.loop
+    return await loop.run_in_executor(None,infos_youtube_api_v2,ctx,data,opus)
+
+async def infos_youtube_api_v2_n_async(ctx,responses,opus):
+    return await asyncio.gather(*[infos_youtube_api_v2_async(ctx,data,opus) for data in responses])
+
+def infos_youtube_api_v2(ctx,data,opus,add_infos={}):
+    ids=[]
+    for items in data['items']:
+        ids.append(items['snippet']['resourceId']['videoId'])
+    movie_infos = []
+    pttn_time = re.compile(r'PT(\d+H)?(\d+M)?(\d+S)?')
+    keys = ['hours', 'minutes', 'seconds']
+    response = requests.get('https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id='+str(",".join(ids))+'&key='+str(youtube_token)+'&maxResults=50')
+    response2=response.json()
+    for data2 in response2['items']:
+        m = pttn_time.search(data2['contentDetails']['duration'])
+        kwargs = {k: 0 if v is None else int(v[:-1])for k, v in zip(keys, m.groups())}
+        info = {
+        "url": 'https://www.youtube.com/watch?v='+str(data2['id']),
+        "title": data2['snippet']['title'],
+        "image_url": data2['snippet']['thumbnails']['default']['url'],
+        "time": to_time(timedelta(**kwargs).total_seconds()),
+        "opus":opus,
+        "author":ctx.author
+        }
+        info.update(add_infos)
+        movie_infos.append(info)
+        movie_info_log(info)
+    return movie_infos
+
+async def infos_spotify_track(url,opus):
+    movie_infos = []
+    track_response=sp.track(url)
+    info = {
+        "url": url,
+        "title": track_response["name"],
+        "image_url": track_response["album"]["images"][0]["url"],
+        "time": to_time(track_response["duration_ms"]/1000),
         "opus":opus
+    }
+    movie_infos.append(info)
+    return movie_infos
+
+async def infos_spotify_album(url,opus):
+    movie_infos = []
+    album_response = sp.album_tracks(url)
+    for track_data in album_response["items"]:
+        track_response=sp.track(track_data["external_urls"]["spotify"])
+        info = {
+            "url": track_data["external_urls"]["spotify"],
+            "title": track_response["name"],
+            "image_url": track_response["album"]["images"][0]["url"],
+            "time": to_time(track_response["duration_ms"]/1000),
+            "opus":opus
         }
         movie_infos.append(info)
-        print(movie_infos)
+    return movie_infos
+
+async def infos_spotify_playlist(url,opus):
+    movie_infos = []
+    playlist_response = sp.playlist_tracks(url)
+    for track_data in playlist_response["items"]:
+        track_response=sp.track(track_data["track"]["external_urls"]["spotify"])
+        info = {
+            "url": track_data["track"]["external_urls"]["spotify"],
+            "title": track_response["name"],
+            "image_url": track_response["album"]["images"][0]["url"],
+            "time": to_time(track_response["duration_ms"]/1000),
+            "opus":opus
+        }
+        movie_infos.append(info)
     return movie_infos
 
 async def live_infos_youtube_api(liveid):
@@ -1541,7 +1654,7 @@ async def on_message(ctx):
 
     if args[0] == "join":
         await join(ctx)
-    elif any([x == args[0] for x in ["leave", "disconnect"]]):
+    elif any([x == args[0] for x in ["leave", "disconnect","dc","b"]]):
         await leave(ctx)
     elif any([x == args[0] for x in ["p"]]) and len(args) >= 2:
         await play(ctx, args)
@@ -1628,12 +1741,16 @@ ssl._create_default_https_context = ssl._create_unverified_context
 token = os.environ['SMILEMUSIC_DISCORD_TOKEN']
 defalut_prefix = os.environ['SMILEMUSIC_PREFIX']
 env = os.environ['SMILEMUSIC_ENV']
-
 youtube_token=os.environ['YOUTUBE_TOKEN']
 YOUTUBE_API_SERVICE_NAME = 'youtube'
 YOUTUBE_API_VERSION = 'v3'
 YOUTUBE_API_KEY = os.environ['YOUTUBE_TOKEN']
 youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION,developerKey=YOUTUBE_API_KEY)
+
+client_id=os.environ['SPOTIFY_CLIENT_ID']
+client_secret=os.environ['SPOTIFY_CLIENT_SECRET']
+auth_manager = SpotifyClientCredentials(client_id,client_secret)
+sp = spotipy.Spotify(auth_manager=auth_manager)
 
 if env != "dev":
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
