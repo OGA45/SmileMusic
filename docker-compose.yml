@@ -16,11 +16,11 @@ services:
             - POSTGRES_PASSWORD
             - POSTGRES_DB
             - POSTGRES_PORT
-        ports:
-            - "5432:5432"
         volumes:
             - ./database:/var/lib/postgresql/data
             - ./initdb:/docker-entrypoint-initdb.d
+        networks:
+            - smile_music_network
 
     smile_music_py:
         restart: always
@@ -42,9 +42,74 @@ services:
             - SMILEMUSIC_PREFIX
             - SMILEMUSIC_ENV=dev
             - YOUTUBE_TOKEN
+            - SPOTIFY_CLIENT_ID
+            - SPOTIFY_CLIENT_SECRET
         volumes:
             - ./python:/opt
+        networks:
+            - smile_music_network
+            - external_network
+
+    smile_music_py2:
+        restart: always
+        build:
+            context: .
+        container_name: "smile_music_py2"
+        tty: true
+        depends_on:
+            smile_music_db:
+                condition: service_healthy
+        command: python smile_music2.py
+        environment:
+            - POSTGRES_HOST
+            - POSTGRES_USER
+            - POSTGRES_PASSWORD
+            - POSTGRES_DB
+            - POSTGRES_PORT
+            - SMILEMUSIC2_DISCORD_TOKEN
+            - SMILEMUSIC2_PREFIX
+            - SMILEMUSIC_ENV=dev
+            - YOUTUBE_TOKEN
+            - SPOTIFY_CLIENT_ID
+            - SPOTIFY_CLIENT_SECRET
+        volumes:
+            - ./python:/opt
+        networks:
+            - smile_music_network
+            - external_network
+
+    smile_music_py3:
+        restart: always
+        build:
+            context: .
+        container_name: "smile_music_py3"
+        tty: true
+        depends_on:
+            smile_music_db:
+                condition: service_healthy
+        command: python smile_music3.py
+        environment:
+            - POSTGRES_HOST
+            - POSTGRES_USER
+            - POSTGRES_PASSWORD
+            - POSTGRES_DB
+            - POSTGRES_PORT
+            - SMILEMUSIC3_DISCORD_TOKEN
+            - SMILEMUSIC3_PREFIX
+            - SMILEMUSIC_ENV=dev
+            - YOUTUBE_TOKEN
+            - SPOTIFY_CLIENT_ID
+            - SPOTIFY_CLIENT_SECRET
+        volumes:
+            - ./python:/opt
+        networks:
+            - smile_music_network
+            - external_network
 
 volumes:
     database:
         driver: local
+networks:
+    smile_music_network:
+        internal: true
+    external_network:
