@@ -37,6 +37,8 @@ database/
 # cookie ファイル (Netscape 形式)。BOT は cookiefile を使っていないので
 # イメージに焼き込む必要はない。ファイル名の揺れを吸収するため広めに除外する。
 **/*cookie*.txt
+# API トークン類 (Cloudflare Pages のデプロイ用など)
+**/*token*.txt
 
 # --- LT / preview artefacts ---
 activity/build_lt_slides.py

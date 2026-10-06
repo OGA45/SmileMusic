@@ -25,10 +25,10 @@ type QueueAddResult = { level: 'info' | 'success' | 'error'; message: string }
 
 const PLACEHOLDER_ART = 'https://placehold.co/600x600/1db954/ffffff?text=Album'
 
-// 利用規約・プライバシーポリシー (Cloudflare Pages)。
-// デプロイ後、実際の Pages ドメインに置き換えること (REPLACE-ME 部分)。
-const LEGAL_TERMS_URL = 'https://REPLACE-ME.pages.dev/terms.html'
-const LEGAL_PRIVACY_URL = 'https://REPLACE-ME.pages.dev/privacy.html'
+// 利用規約・プライバシーポリシー (Cloudflare Pages。中身はリポジトリの legal/)。
+// Pages は *.html を拡張子なしの URL へ 308 で転送するので、転送先の正規 URL を使う。
+const LEGAL_TERMS_URL = 'https://smilemusic3-legal.oga.ninja/terms'
+const LEGAL_PRIVACY_URL = 'https://smilemusic3-legal.oga.ninja/privacy'
 
 // FE-MAINT-07: queueNextIndex のセンチネル値を名前付き定数化
 // (-1 = 次の曲なし は ws.ts の型コメント参照。-2 = 1曲ループ中で次も現在の曲)

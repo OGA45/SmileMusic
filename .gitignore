@@ -4,6 +4,8 @@
 .env
 # cookie ファイル (Netscape 形式) は追跡しない
 *cookie*.txt
+# API トークン類 (Cloudflare Pages のデプロイ用など)
+*token*.txt
 
 # yt-dlp / niconico のダウンロードキャッシュ。
 # 本番では OGA_MUSIC_DOWNLOAD_DIR で専用ボリュームへ逃がしているが、
