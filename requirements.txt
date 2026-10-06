@@ -1,10 +1,26 @@
-discord.py
+# discord.py>=2.5 でも Activity の Entry Point コマンドがあると tree.sync の
+# bulk 更新は error 50240 で失敗する。smile_music3 の _safe_tree_sync が
+# Entry Point (type=4) を payload に含めて再同期するフォールバックを持つ。
+discord.py[voice]>=2.5.0
 aiofile
 youtube-dl
 bs4
 psycopg2
 requests
 PyNaCl
-yt-dlp
+# 2026.07.04 以前は既定クライアントが android_vr で、2026-08-17 以降の YouTube は
+# その URL を先頭 1MiB 以降 403 にする (全曲スキップ)。2026.08.19 で既定が
+# visionos に変わり解消 (yt-dlp#17456 / #17461)。[default] で yt-dlp-ejs も揃える。
+yt-dlp[default]>=2026.8.19
 tqdm
 google-api-python-client
+niconico.py
+spotdl
+spotipy
+nest-asyncio
+beautifulsoup4
+requests
+fastapi
+uvicorn[standard]
+httpx
+numpy

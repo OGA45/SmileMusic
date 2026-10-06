@@ -1,0 +1,6 @@
+FROM python:3.14-slim
+WORKDIR /app
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" httpx
+COPY hub.py hub.html /app/
+EXPOSE 8080
+CMD ["python", "hub.py"]

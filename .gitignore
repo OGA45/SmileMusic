@@ -2,3 +2,33 @@
 !/hiddendata/.gitkeep
 /database/*
 .env
+# cookie ファイル (Netscape 形式) は追跡しない
+*cookie*.txt
+
+# yt-dlp / niconico のダウンロードキャッシュ。
+# 本番では OGA_MUSIC_DOWNLOAD_DIR で専用ボリュームへ逃がしているが、
+# ローカル実行時にソースツリーへ落ちるものを追跡しない。
+/python/*.opus
+/python/__pycache__/
+/python/.cache
+/python/.spotdl-cache
+
+# ffmpeg の自前ビルド (各 140MB 前後で GitHub の 100MB 制限を超える)。
+# Dockerfile が COPY するのでビルド時は手元に置いておく
+/ffmpeg
+/ffplay
+/ffprobe
+/OLD_FFMPEG/
+
+# 本番ログ・Python のバイトコード
+*.logs
+__pycache__/
+*.pyc
+
+# 公開リポジトリには載せない内部資料と開発用コード
+/CODE_REVIEW*.md
+/CODE_REVIEW*.json
+/DEPLOY_RUNBOOK.md
+/python/dev/
+/python/smile_music_dev.py
+/.cookie-backup-*/

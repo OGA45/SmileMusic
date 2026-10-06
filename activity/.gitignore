@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.env
+.env.local
+*.local
+*.log
+.vite
+
+# tsc -b が生成するもの
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

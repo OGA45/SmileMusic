@@ -1,0 +1,47 @@
+# --- VCS / editor / Claude ---
+.git/
+.gitignore
+.github/
+.claude/
+.vscode/
+.idea/
+
+# --- Activity (Node) ---
+# ホスト側の node_modules を含めると stage1 で npm ci した結果が上書きされ、
+# tsc の実行権限が消えて "Permission denied" になるので必ず除外する。
+activity/node_modules/
+activity/dist/
+activity/.vite/
+activity/.env
+activity/.env.local
+activity/.env.*.local
+
+# --- Python ---
+python/__pycache__/
+python/**/__pycache__/
+python/**/*.pyc
+python/.cache/
+python/.spotdl-cache/
+python/dev/
+# niconico DL キャッシュ (大きいので除外)
+python/sm*.opus
+python/mmrrHmDVtdw.opus
+
+# --- runtime ---
+database/
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+# cookie ファイル (Netscape 形式)。BOT は cookiefile を使っていないので
+# イメージに焼き込む必要はない。ファイル名の揺れを吸収するため広めに除外する。
+**/*cookie*.txt
+
+# --- LT / preview artefacts ---
+activity/build_lt_slides.py
+activity/LT_SmileMusic*.pptx
+activity/preview_slide*.png
+
+# --- misc ---
+*.log

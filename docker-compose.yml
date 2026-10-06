@@ -1,115 +1,238 @@
-version: "3"
-
 services:
-    smile_music_db:
-        image: postgres:13.2
-        restart: always
-        container_name: "smile_music_db"
-        healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -d ${POSTGRES_DB}"]
-            interval: 10s
-            timeout: 5s
-            retries: 5
-        environment:
-            - POSTGRES_HOST
-            - POSTGRES_USER
-            - POSTGRES_PASSWORD
-            - POSTGRES_DB
-            - POSTGRES_PORT
-        volumes:
-            - ./database:/var/lib/postgresql/data
-            - ./initdb:/docker-entrypoint-initdb.d
-        networks:
-            - smile_music_network
+  smile_music_db:
+    # 13.2 は 2021 年リリースで未適用のパッチが多い。13 系最終版へ更新。
+    # (buster→bookworm で glibc collation が変わるため初回起動後に
+    #  REINDEX DATABASE が必要 — 手順書参照)
+    image: postgres:13.22
+    restart: always
+    container_name: "smile_music_db"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -h localhost -p 5432 -d ${POSTGRES_DB}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      - POSTGRES_HOST
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_PORT
+    volumes:
+      - ./database:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d
+    ports:
+      - 5432:5432
 
-    smile_music_py:
-        restart: always
-        build:
-            context: .
-        container_name: "smile_music_py"
-        tty: true
-        depends_on:
-            smile_music_db:
-                condition: service_healthy
-        command: python smile_music.py
-        environment:
-            - POSTGRES_HOST
-            - POSTGRES_USER
-            - POSTGRES_PASSWORD
-            - POSTGRES_DB
-            - POSTGRES_PORT
-            - SMILEMUSIC_DISCORD_TOKEN
-            - SMILEMUSIC_PREFIX
-            - SMILEMUSIC_ENV=dev
-            - YOUTUBE_TOKEN
-            - SPOTIFY_CLIENT_ID
-            - SPOTIFY_CLIENT_SECRET
-        volumes:
-            - ./python:/opt
-        networks:
-            - smile_music_network
-            - external_network
+  # ===== OGA_Music — 3インスタンスとも同じ smile_music3.py を実行する =====
+  # コードは SMILEMUSIC3_* の環境変数名を読むため、beta/release は
+  # environment でインスタンス固有の値 (SMILEMUSIC2_*/SMILEMUSIC_*) を
+  # SMILEMUSIC3_* にマッピングする。テーブルは OGA_MUSIC_TABLE_SUFFIX で分離
+  # (alpha="3"=従来テーブル, beta="2"=旧py2のguilds2を継承, release=""=旧pyのguildsを継承)。
 
-    smile_music_py2:
-        restart: always
-        build:
-            context: .
-        container_name: "smile_music_py2"
-        tty: true
-        depends_on:
-            smile_music_db:
-                condition: service_healthy
-        command: python smile_music2.py
-        environment:
-            - POSTGRES_HOST
-            - POSTGRES_USER
-            - POSTGRES_PASSWORD
-            - POSTGRES_DB
-            - POSTGRES_PORT
-            - SMILEMUSIC2_DISCORD_TOKEN
-            - SMILEMUSIC2_PREFIX
-            - SMILEMUSIC_ENV=dev
-            - YOUTUBE_TOKEN
-            - SPOTIFY_CLIENT_ID
-            - SPOTIFY_CLIENT_SECRET
-        volumes:
-            - ./python:/opt
-        networks:
-            - smile_music_network
-            - external_network
+  oga_music_alpha:
+    restart: always
+    build:
+      context: .
+      args:
+        # フロントを vite build するときに必要 (VITE_ prefix の env だけが
+        # クライアントバンドルに含められる)
+        VITE_DISCORD_CLIENT_ID: "${SMILEMUSIC3_DISCORD_CLIENT_ID}"
+    container_name: "oga_music_alpha"
+    tty: true
+    depends_on:
+      smile_music_db:
+        condition: service_healthy
+    command: python smile_music3.py
+    environment:
+      - POSTGRES_HOST
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_PORT
+      - SMILEMUSIC3_DISCORD_TOKEN
+      - SMILEMUSIC3_PREFIX
+      - SMILEMUSIC_ENV=dev
+      - YOUTUBE_TOKEN
+      - SMILEMUSIC3_DISCORD_CLIENT_ID
+      - SMILEMUSIC3_DISCORD_CLIENT_SECRET
+      - SMILEMUSIC3_ACTIVITY_HOST
+      - SMILEMUSIC3_ADMIN_TOKEN
+      - JELLYFIN_BASE_URL
+      - JELLYFIN_USERNAME
+      - JELLYFIN_PASSWORD
+      - OGA_MUSIC_TABLE_SUFFIX=3
+      - OGA_MUSIC_DOWNLOAD_DIR=/var/cache/oga_music
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./python:/opt
+      - oga_alpha_dl:/var/cache/oga_music
+    # ローカル動作確認用にホストへ露出 (本番では Traefik 経由のみで使う想定)
+    ports:
+      - "8080:8080"
+    networks:
+      - default
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-network"
+      # フロント(静的) + /api/* + /ws/* を同じFastAPIにまとめて流す
+      - "traefik.http.routers.oga_music_alpha.rule=Host(`${SMILEMUSIC3_ACTIVITY_HOST}`)"
+      - "traefik.http.routers.oga_music_alpha.entrypoints=websecure"
+      - "traefik.http.routers.oga_music_alpha.tls=true"
+      - "traefik.http.routers.oga_music_alpha.service=oga_music_alpha"
+      - "traefik.http.services.oga_music_alpha.loadbalancer.server.port=8080"
 
-    smile_music_py3:
-        restart: always
-        build:
-            context: .
-        container_name: "smile_music_py3"
-        tty: true
-        depends_on:
-            smile_music_db:
-                condition: service_healthy
-        command: python smile_music3.py
-        environment:
-            - POSTGRES_HOST
-            - POSTGRES_USER
-            - POSTGRES_PASSWORD
-            - POSTGRES_DB
-            - POSTGRES_PORT
-            - SMILEMUSIC3_DISCORD_TOKEN
-            - SMILEMUSIC3_PREFIX
-            - SMILEMUSIC_ENV=dev
-            - YOUTUBE_TOKEN
-            - SPOTIFY_CLIENT_ID
-            - SPOTIFY_CLIENT_SECRET
-        volumes:
-            - ./python:/opt
-        networks:
-            - smile_music_network
-            - external_network
+  oga_music_beta:
+    # Dev Portal / DNS の準備が済むまで誤って起動しないようプロファイルで隔離。
+    # 起動するときだけ: docker compose --profile full up -d oga_music_beta
+    profiles: ["full"]
+    restart: always
+    build:
+      context: .
+      args:
+        VITE_DISCORD_CLIENT_ID: "${SMILEMUSIC2_DISCORD_CLIENT_ID}"
+    container_name: "oga_music_beta"
+    tty: true
+    depends_on:
+      smile_music_db:
+        condition: service_healthy
+    command: python smile_music3.py
+    environment:
+      - POSTGRES_HOST
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_PORT
+      # コードが読む SMILEMUSIC3_* へ beta 固有値をマッピング
+      - SMILEMUSIC3_DISCORD_TOKEN=${SMILEMUSIC2_DISCORD_TOKEN}
+      - SMILEMUSIC3_PREFIX=${SMILEMUSIC2_PREFIX}
+      - SMILEMUSIC_ENV=dev
+      - YOUTUBE_TOKEN
+      - SMILEMUSIC3_DISCORD_CLIENT_ID=${SMILEMUSIC2_DISCORD_CLIENT_ID}
+      - SMILEMUSIC3_DISCORD_CLIENT_SECRET=${SMILEMUSIC2_DISCORD_CLIENT_SECRET}
+      - SMILEMUSIC3_ACTIVITY_HOST=${SMILEMUSIC2_ACTIVITY_HOST}
+      - SMILEMUSIC3_ADMIN_TOKEN=${SMILEMUSIC2_ADMIN_TOKEN}
+      - JELLYFIN_BASE_URL
+      - JELLYFIN_USERNAME
+      - JELLYFIN_PASSWORD
+      - OGA_MUSIC_TABLE_SUFFIX=2
+      - OGA_MUSIC_DOWNLOAD_DIR=/var/cache/oga_music
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./python:/opt
+      - oga_beta_dl:/var/cache/oga_music
+    # ホストポートは公開しない (本番の 8081 は別サービスが使用中)。
+    # 外部からは Traefik、ハブからは内部ネットワーク経由で到達する。
+    networks:
+      - default
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-network"
+      - "traefik.http.routers.oga_music_beta.rule=Host(`${SMILEMUSIC2_ACTIVITY_HOST}`)"
+      - "traefik.http.routers.oga_music_beta.entrypoints=websecure"
+      - "traefik.http.routers.oga_music_beta.tls=true"
+      - "traefik.http.routers.oga_music_beta.service=oga_music_beta"
+      - "traefik.http.services.oga_music_beta.loadbalancer.server.port=8080"
+
+  oga_music_release:
+    profiles: ["full"]
+    restart: always
+    build:
+      context: .
+      args:
+        VITE_DISCORD_CLIENT_ID: "${SMILEMUSIC_DISCORD_CLIENT_ID}"
+    container_name: "oga_music_release"
+    tty: true
+    depends_on:
+      smile_music_db:
+        condition: service_healthy
+    command: python smile_music3.py
+    environment:
+      - POSTGRES_HOST
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_PORT
+      # コードが読む SMILEMUSIC3_* へ release 固有値をマッピング
+      - SMILEMUSIC3_DISCORD_TOKEN=${SMILEMUSIC_DISCORD_TOKEN}
+      - SMILEMUSIC3_PREFIX=${SMILEMUSIC_PREFIX}
+      - SMILEMUSIC_ENV=dev
+      - YOUTUBE_TOKEN
+      - SMILEMUSIC3_DISCORD_CLIENT_ID=${SMILEMUSIC_DISCORD_CLIENT_ID}
+      - SMILEMUSIC3_DISCORD_CLIENT_SECRET=${SMILEMUSIC_DISCORD_CLIENT_SECRET}
+      - SMILEMUSIC3_ACTIVITY_HOST=${SMILEMUSIC_ACTIVITY_HOST}
+      - SMILEMUSIC3_ADMIN_TOKEN=${SMILEMUSIC_ADMIN_TOKEN}
+      - JELLYFIN_BASE_URL
+      - JELLYFIN_USERNAME
+      - JELLYFIN_PASSWORD
+      # release は素のテーブル名 (guilds/history/...) — 明示的に空文字を設定
+      - OGA_MUSIC_TABLE_SUFFIX=
+      - OGA_MUSIC_DOWNLOAD_DIR=/var/cache/oga_music
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./python:/opt
+      - oga_release_dl:/var/cache/oga_music
+    networks:
+      - default
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-network"
+      - "traefik.http.routers.oga_music_release.rule=Host(`${SMILEMUSIC_ACTIVITY_HOST}`)"
+      - "traefik.http.routers.oga_music_release.entrypoints=websecure"
+      - "traefik.http.routers.oga_music_release.tls=true"
+      - "traefik.http.routers.oga_music_release.service=oga_music_release"
+      - "traefik.http.services.oga_music_release.loadbalancer.server.port=8080"
+
+  # ===== 3インスタンスを取りまとめるハブ画面 (独立サービス) =====
+  oga_music_hub:
+    profiles: ["full"]
+    restart: always
+    build:
+      context: ./hub
+      dockerfile: Dockerfile.hub
+    container_name: "oga_music_hub"
+    environment:
+      - OGA_HUB_ADMIN_TOKEN
+      # 内部ネットワーク経由で各インスタンスの admin API に接続する
+      - OGA_HUB_ALPHA_URL=http://oga_music_alpha:8080
+      - OGA_HUB_ALPHA_TOKEN=${SMILEMUSIC3_ADMIN_TOKEN}
+      - OGA_HUB_ALPHA_NAME=アルファ
+      - OGA_HUB_ALPHA_PUBLIC_ADMIN_URL=https://${SMILEMUSIC3_ACTIVITY_HOST}/admin
+      - OGA_HUB_BETA_URL=http://oga_music_beta:8080
+      - OGA_HUB_BETA_TOKEN=${SMILEMUSIC2_ADMIN_TOKEN}
+      - OGA_HUB_BETA_NAME=ベータ
+      - OGA_HUB_BETA_PUBLIC_ADMIN_URL=https://${SMILEMUSIC2_ACTIVITY_HOST}/admin
+      - OGA_HUB_RELEASE_URL=http://oga_music_release:8080
+      - OGA_HUB_RELEASE_TOKEN=${SMILEMUSIC_ADMIN_TOKEN}
+      - OGA_HUB_RELEASE_NAME=リリース
+      - OGA_HUB_RELEASE_PUBLIC_ADMIN_URL=https://${SMILEMUSIC_ACTIVITY_HOST}/admin
+    ports:
+      - "8090:8080"   # ローカル確認用 (8090 は空いている)
+    networks:
+      - default
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-network"
+      - "traefik.http.routers.oga_music_hub.rule=Host(`${OGA_HUB_HOST}`)"
+      - "traefik.http.routers.oga_music_hub.entrypoints=websecure"
+      - "traefik.http.routers.oga_music_hub.tls=true"
+      - "traefik.http.routers.oga_music_hub.service=oga_music_hub"
+      - "traefik.http.services.oga_music_hub.loadbalancer.server.port=8080"
+
+networks:
+  traefik-network:
+    external: true
 
 volumes:
-    database:
-        driver: local
-networks:
-    smile_music_network:
-        internal: true
-    external_network:
+  database:
+    driver: local
+  oga_alpha_dl:
+  oga_beta_dl:
+  oga_release_dl:

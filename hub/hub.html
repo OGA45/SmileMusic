@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>OGA_Music Hub</title>
+<style>
+/* ===== Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+  min-height: 100vh;
+  line-height: 1.5;
+}
+a { color: #60a5fa; text-decoration: underline; }
+a:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; border-radius: 2px; }
+button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+
+/* ===== Token Gate ===== */
+#gate {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 1rem;
+}
+.gate-card {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  width: 100%; max-width: 380px;
+}
+.gate-title {
+  font-size: 1.375rem; font-weight: 700;
+  text-align: center; margin-bottom: 1.5rem;
+  color: #f1f5f9;
+}
+.gate-label { display: block; font-size: 0.875rem; color: #94a3b8; margin-bottom: 0.375rem; }
+.gate-input {
+  width: 100%; padding: 0.625rem 0.875rem;
+  background: #0f1117; border: 1px solid #3b4560;
+  border-radius: 6px; color: #e2e8f0;
+  font-size: 1rem; /* iOS ズーム防止 */
+  transition: border-color 0.15s;
+}
+.gate-input:focus { outline: 2px solid #60a5fa; outline-offset: 0; border-color: #60a5fa; }
+.gate-btn {
+  width: 100%; margin-top: 1rem;
+  padding: 0.75rem 1rem; /* ≥44px タッチターゲット */
+  background: #3b82f6; color: #fff;
+  border: none; border-radius: 6px;
+  font-size: 1rem; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+  min-height: 44px;
+}
+.gate-btn:hover { background: #2563eb; }
+.gate-btn:active { background: #1d4ed8; }
+.gate-error {
+  margin-top: 0.875rem;
+  color: #f87171;
+  font-size: 0.875rem;
+  text-align: center;
+  display: none;
+}
+
+/* ===== App Shell ===== */
+#app { display: none; flex-direction: column; min-height: 100vh; }
+
+/* ===== Header ===== */
+.header {
+  background: #1e2230;
+  border-bottom: 1px solid #2d3448;
+  padding: 0.75rem 1.25rem;
+  display: flex; align-items: center; gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.header-title {
+  font-size: 1.125rem; font-weight: 700;
+  color: #f1f5f9; flex: 1;
+  min-width: 0;
+}
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #6b7280; flex-shrink: 0;
+  transition: background 0.3s;
+}
+.status-dot.ok  { background: #22c55e; }
+.status-dot.err { background: #ef4444; }
+.logout-btn {
+  padding: 0.5rem 1rem;
+  background: transparent; border: 1px solid #3b4560;
+  border-radius: 6px; color: #94a3b8;
+  font-size: 0.875rem; cursor: pointer;
+  min-height: 36px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.logout-btn:hover { border-color: #ef4444; color: #ef4444; }
+
+/* ===== Main Content ===== */
+.main {
+  padding: 1.25rem; flex: 1;
+  max-width: 1400px; width: 100%; margin: 0 auto;
+}
+
+/* ===== インスタンスグリッド ===== */
+.instances-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.25rem;
+}
+
+/* ===== インスタンスカード ===== */
+.inst-card {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.inst-card-header {
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.875rem 1.125rem 0.75rem;
+  border-bottom: 1px solid #2d3448;
+  flex-wrap: wrap;
+}
+.inst-name {
+  font-size: 1rem; font-weight: 700;
+  color: #f1f5f9; flex: 1; min-width: 0;
+}
+.badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* チャンネルバッジ */
+.badge-channel {
+  background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8;
+}
+/* 稼働中 */
+.badge-ok  { background: #14532d; color: #86efac; border: 1px solid #166534; }
+/* 停止・エラー */
+.badge-err { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+/* DB OK/NG */
+.badge-db-ok { background: #14532d; color: #86efac; border: 1px solid #166534; }
+.badge-db-ng { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+
+/* ===== Stat Rows ===== */
+.inst-body { padding: 0.75rem 1.125rem; flex: 1; }
+.stat-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid #232740;
+  font-size: 0.9375rem; gap: 0.5rem;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: #94a3b8; flex-shrink: 0; }
+.stat-value {
+  color: #e2e8f0; font-weight: 500;
+  text-align: right; min-width: 0; word-break: break-all;
+}
+
+/* ===== エラー表示 ===== */
+.inst-error-body {
+  padding: 1rem 1.125rem;
+  color: #fca5a5;
+  font-size: 0.9375rem;
+  word-break: break-all;
+}
+
+/* ===== カードフッター ===== */
+.inst-footer {
+  padding: 0.625rem 1.125rem;
+  border-top: 1px solid #2d3448;
+}
+.admin-link-btn {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: transparent; border: 1px solid #3b4560;
+  border-radius: 6px; color: #94a3b8;
+  font-size: 0.875rem; cursor: pointer;
+  text-decoration: none;
+  min-height: 36px; line-height: 1.5;
+  transition: border-color 0.15s, color 0.15s;
+}
+.admin-link-btn:hover { border-color: #60a5fa; color: #93c5fd; }
+
+/* ===== Utilities ===== */
+.em-dash { color: #475569; }
+
+/* ===== Toast ===== */
+#toast-container {
+  position: fixed; bottom: 1.25rem; right: 1.25rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  z-index: 9999; pointer-events: none;
+}
+.toast {
+  padding: 0.75rem 1.125rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  max-width: 320px;
+  box-shadow: 0 4px 16px #00000080;
+  animation: toast-in 0.2s ease;
+  pointer-events: auto;
+}
+.toast-ok  { background: #1e2a3a; border: 1px solid #1d4ed8; color: #93c5fd; }
+.toast-err { background: #2d1010; border: 1px solid #7f1d1d; color: #fca5a5; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+</style>
+</head>
+<body>
+
+<!-- トークンゲート -->
+<div id="gate">
+  <div class="gate-card">
+    <h1 class="gate-title">OGA_Music Hub</h1>
+    <label class="gate-label" for="token-input">管理トークン</label>
+    <input id="token-input" class="gate-input" type="password"
+           autocomplete="current-password" placeholder="トークンを入力">
+    <button id="token-save-btn" class="gate-btn">保存</button>
+    <p id="gate-error" class="gate-error" role="alert" aria-live="assertive">トークンが無効です</p>
+  </div>
+</div>
+
+<!-- アプリシェル -->
+<div id="app">
+  <header class="header">
+    <h1 class="header-title">OGA_Music Hub</h1>
+    <div id="status-dot" class="status-dot"
+         title="最終ポーリング: 不明" aria-label="通信状態"></div>
+    <button id="logout-btn" class="logout-btn">ログアウト</button>
+  </header>
+
+  <main class="main">
+    <div class="instances-grid" id="instances-grid">
+      <!-- JS で描画 -->
+    </div>
+  </main>
+</div>
+
+<!-- Toast コンテナ -->
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<script>
+'use strict';
+
+// ===== 状態 =====
+let token = null;
+let pollHandle = null;
+let pollingActive = false;
+
+// ===== DOM refs =====
+const gateEl       = document.getElementById('gate');
+const appEl        = document.getElementById('app');
+const tokenInput   = document.getElementById('token-input');
+const tokenSaveBtn = document.getElementById('token-save-btn');
+const gateError    = document.getElementById('gate-error');
+const statusDot    = document.getElementById('status-dot');
+const logoutBtn    = document.getElementById('logout-btn');
+const gridEl       = document.getElementById('instances-grid');
+
+// ===== API ヘルパー =====
+// 401 が返ったらトークンをクリアしてゲートへ戻る。
+async function api(path, opts) {
+  const headers = { 'Authorization': 'Bearer ' + token };
+  const res = await fetch(path, { ...(opts || {}), headers });
+  if (res.status === 401) {
+    onUnauthorized();
+    throw new Error('401');
+  }
+  return res;
+}
+
+function onUnauthorized() {
+  stopPolling();
+  localStorage.removeItem('oga_hub_token');
+  token = null;
+  gateError.style.display = 'block';
+  showGate();
+}
+
+// ===== ゲート表示切替 =====
+function showGate() {
+  gateEl.style.display = 'flex';
+  appEl.style.display = 'none';
+}
+function showApp() {
+  gateEl.style.display = 'none';
+  appEl.style.display = 'flex';
+  appEl.style.flexDirection = 'column';
+}
+
+function saveToken() {
+  const val = tokenInput.value.trim();
+  if (!val) return;
+  token = val;
+  localStorage.setItem('oga_hub_token', val);
+  gateError.style.display = 'none';
+  tokenInput.value = '';
+  showApp();
+  startPolling();
+}
+
+tokenSaveBtn.addEventListener('click', saveToken);
+tokenInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') saveToken(); });
+
+logoutBtn.addEventListener('click', function() {
+  stopPolling();
+  localStorage.removeItem('oga_hub_token');
+  token = null;
+  gateError.style.display = 'none';
+  showGate();
+});
+
+// ===== ポーリング制御 =====
+function startPolling() {
+  if (pollingActive) return;
+  pollingActive = true;
+  fetchOverview(); // 即時 1 回
+  pollHandle = setInterval(fetchOverview, 5000);
+}
+function stopPolling() {
+  pollingActive = false;
+  clearInterval(pollHandle);
+  pollHandle = null;
+}
+
+// タブ非表示時は停止、再表示時に再開
+document.addEventListener('visibilitychange', function() {
+  if (!token) return;
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    pollingActive = false;
+    startPolling();
+  }
+});
+
+// ===== ステータスドット =====
+function setStatus(ok) {
+  statusDot.className = 'status-dot ' + (ok ? 'ok' : 'err');
+  statusDot.title = '最終ポーリング: ' + new Date().toLocaleTimeString('ja-JP') + (ok ? ' ✓' : ' ✗');
+}
+
+// ===== フォーマットヘルパー =====
+function fmt(v, suffix) {
+  if (v === null || v === undefined) return '—';
+  return String(v) + (suffix || '');
+}
+function fmtMs(v) {
+  if (v === null || v === undefined) return '—';
+  return v.toFixed(1) + ' ms';
+}
+function fmtMB(bytes) {
+  if (bytes === null || bytes === undefined) return '—';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+function fmtUptime(secs) {
+  if (secs === null || secs === undefined) return '—';
+  var s = Math.floor(secs);
+  var days = Math.floor(s / 86400);
+  var h    = Math.floor((s % 86400) / 3600);
+  var m    = Math.floor((s % 3600) / 60);
+  var sec  = s % 60;
+  var hms  = pad2(h) + ':' + pad2(m) + ':' + pad2(sec);
+  return days > 0 ? days + '日 ' + hms : hms;
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// ===== 概要取得 =====
+async function fetchOverview() {
+  try {
+    var res = await api('/api/hub/overview');
+    if (!res.ok) { setStatus(false); return; }
+    var d = await res.json();
+    setStatus(true);
+    renderInstances(d.instances || []);
+  } catch (e) {
+    if (e.message !== '401') setStatus(false);
+  }
+}
+
+// ===== インスタンスカード描画 =====
+function renderInstances(instances) {
+  // 既存カードを key で管理して差分更新 (単純に全置換でもよいが、ちらつきを抑える)
+  gridEl.innerHTML = '';
+  if (instances.length === 0) {
+    var msg = document.createElement('p');
+    msg.style.cssText = 'color:#64748b;padding:1.5rem 0;';
+    msg.textContent = 'インスタンスが登録されていません。環境変数を確認してください。';
+    gridEl.appendChild(msg);
+    return;
+  }
+  instances.forEach(function(inst) {
+    gridEl.appendChild(buildCard(inst));
+  });
+}
+
+function buildCard(inst) {
+  var card = document.createElement('article');
+  card.className = 'inst-card';
+  card.setAttribute('aria-label', 'インスタンス: ' + inst.name);
+
+  // ── カードヘッダ ──
+  var header = document.createElement('div');
+  header.className = 'inst-card-header';
+
+  var nameEl = document.createElement('span');
+  nameEl.className = 'inst-name';
+  nameEl.textContent = inst.name;
+  header.appendChild(nameEl);
+
+  // チャンネルバッジ (bot.channel_name)
+  var channelName = safeGet(inst, ['overview', 'bot', 'channel_name']);
+  if (channelName) {
+    var chBadge = document.createElement('span');
+    chBadge.className = 'badge badge-channel';
+    chBadge.textContent = channelName;
+    header.appendChild(chBadge);
+  }
+
+  // 稼働状態バッジ
+  var statusBadge = document.createElement('span');
+  if (inst.ok) {
+    statusBadge.className = 'badge badge-ok';
+    statusBadge.textContent = '稼働中';
+  } else {
+    statusBadge.className = 'badge badge-err';
+    statusBadge.textContent = '停止 / エラー';
+  }
+  header.appendChild(statusBadge);
+  card.appendChild(header);
+
+  // ── カードボディ ──
+  if (inst.ok) {
+    var body = document.createElement('div');
+    body.className = 'inst-body';
+
+    var ov  = inst.overview || {};
+    var bot = ov.bot    || {};
+    var sys = ov.system || {};
+    var dc  = ov.discord || {};
+    var db  = ov.db     || {};
+    var act = ov.activity || {};
+    var gs  = inst.guilds_summary || {};
+
+    // BOT ユーザー
+    body.appendChild(makeStatRow('BOT', fmt(bot.user)));
+    // 稼働時間
+    body.appendChild(makeStatRow('稼働時間', fmtUptime(bot.uptime_s)));
+    // サーバー数 / VC接続 / 再生中 (guilds_summary から)
+    body.appendChild(makeStatRow('サーバー数', fmt(gs.guild_count)));
+    body.appendChild(makeStatRow('VC接続', fmt(gs.voice_connected)));
+    body.appendChild(makeStatRow('再生中', fmt(gs.playing)));
+    // CPU / メモリ
+    body.appendChild(makeStatRow('CPU', fmt(sys.cpu_percent, ' %')));
+    body.appendChild(makeStatRow('メモリ', fmtMB(sys.rss_bytes)));
+    // Discord レイテンシ
+    body.appendChild(makeStatRow('Discordレイテンシ', fmtMs(dc.latency_ms)));
+    // DB 状態 + レイテンシ
+    body.appendChild(makeStatRowNode('DB', buildDbBadge(db)));
+    // Activity WS 数
+    body.appendChild(makeStatRow('Activity WS数', fmt(act.total_ws_connections)));
+    // discord.py バージョン
+    var dpyVer = safeGet(inst, ['overview', 'bot', 'versions', 'discord.py']);
+    body.appendChild(makeStatRow('discord.py', fmt(dpyVer)));
+
+    card.appendChild(body);
+  } else {
+    // エラー表示
+    var errBody = document.createElement('div');
+    errBody.className = 'inst-error-body';
+    var errText = document.createElement('span');
+    errText.textContent = inst.error || 'エラー詳細不明';
+    errBody.appendChild(errText);
+    card.appendChild(errBody);
+  }
+
+  // ── カードフッター (管理画面リンク) ──
+  if (inst.public_admin_url) {
+    var footer = document.createElement('div');
+    footer.className = 'inst-footer';
+    var link = document.createElement('a');
+    link.className = 'admin-link-btn';
+    link.href = inst.public_admin_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = '管理画面を開く';
+    // スクリーンリーダー向けにインスタンス名を補足
+    link.setAttribute('aria-label', inst.name + ' の管理画面を開く (新しいタブ)');
+    footer.appendChild(link);
+    card.appendChild(footer);
+  }
+
+  return card;
+}
+
+// stat-row (テキスト値)
+function makeStatRow(label, value) {
+  var row = document.createElement('div');
+  row.className = 'stat-row';
+  var lbl = document.createElement('span');
+  lbl.className = 'stat-label';
+  lbl.textContent = label;
+  var val = document.createElement('span');
+  val.className = 'stat-value' + (value === '—' ? ' em-dash' : '');
+  val.textContent = value;
+  row.appendChild(lbl);
+  row.appendChild(val);
+  return row;
+}
+
+// stat-row (DOM ノード値 — DB バッジなど)
+function makeStatRowNode(label, valueNode) {
+  var row = document.createElement('div');
+  row.className = 'stat-row';
+  var lbl = document.createElement('span');
+  lbl.className = 'stat-label';
+  lbl.textContent = label;
+  var val = document.createElement('span');
+  val.className = 'stat-value';
+  val.appendChild(valueNode);
+  row.appendChild(lbl);
+  row.appendChild(val);
+  return row;
+}
+
+// DB バッジ + レイテンシ
+function buildDbBadge(db) {
+  var wrap = document.createElement('span');
+  var badge = document.createElement('span');
+  if (db.ok === true) {
+    badge.className = 'badge badge-db-ok';
+    badge.textContent = 'OK';
+  } else if (db.ok === false) {
+    badge.className = 'badge badge-db-ng';
+    badge.textContent = 'NG';
+  } else {
+    badge.textContent = '—';
+    badge.style.color = '#475569';
+  }
+  wrap.appendChild(badge);
+  if (db.latency_ms !== null && db.latency_ms !== undefined) {
+    var lat = document.createElement('span');
+    lat.style.cssText = 'margin-left:0.4rem;font-size:0.8125rem;color:#94a3b8;';
+    lat.textContent = fmtMs(db.latency_ms);
+    wrap.appendChild(lat);
+  }
+  return wrap;
+}
+
+// 安全なネストプロパティアクセス
+function safeGet(obj, keys) {
+  var cur = obj;
+  for (var i = 0; i < keys.length; i++) {
+    if (cur === null || cur === undefined) return undefined;
+    cur = cur[keys[i]];
+  }
+  return cur;
+}
+
+// ===== Toast =====
+function showToast(message, isOk) {
+  var container = document.getElementById('toast-container');
+  var toast = document.createElement('div');
+  toast.className = 'toast ' + (isOk ? 'toast-ok' : 'toast-err');
+  toast.textContent = message; // textContent — XSS なし
+  container.appendChild(toast);
+  setTimeout(function() {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s';
+    setTimeout(function() { toast.remove(); }, 350);
+  }, 4000);
+}
+
+// ===== 初期化 =====
+(function init() {
+  var stored = localStorage.getItem('oga_hub_token');
+  if (stored) {
+    token = stored;
+    showApp();
+    startPolling();
+  } else {
+    showGate();
+  }
+})();
+</script>
+</body>
+</html>

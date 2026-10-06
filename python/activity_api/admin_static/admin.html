@@ -1,0 +1,2044 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>OGA_Music 管理</title>
+<style>
+/* ===== Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+  min-height: 100vh;
+  line-height: 1.5;
+}
+a { color: #60a5fa; text-decoration: underline; }
+a:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; border-radius: 2px; }
+button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+
+/* ===== Token Gate ===== */
+#gate {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 1rem;
+}
+.gate-card {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  width: 100%; max-width: 380px;
+}
+.gate-title {
+  font-size: 1.375rem; font-weight: 700;
+  text-align: center; margin-bottom: 1.5rem;
+  color: #f1f5f9;
+}
+.gate-label { display: block; font-size: 0.875rem; color: #94a3b8; margin-bottom: 0.375rem; }
+.gate-input {
+  width: 100%; padding: 0.625rem 0.875rem;
+  background: #0f1117; border: 1px solid #3b4560;
+  border-radius: 6px; color: #e2e8f0;
+  font-size: 1rem; /* prevent iOS zoom */
+  transition: border-color 0.15s;
+}
+.gate-input:focus { outline: 2px solid #60a5fa; outline-offset: 0; border-color: #60a5fa; }
+.gate-btn {
+  width: 100%; margin-top: 1rem;
+  padding: 0.75rem 1rem; /* ≥44px touch target */
+  background: #3b82f6; color: #fff;
+  border: none; border-radius: 6px;
+  font-size: 1rem; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+  min-height: 44px;
+}
+.gate-btn:hover { background: #2563eb; }
+.gate-btn:active { background: #1d4ed8; }
+.gate-error {
+  margin-top: 0.875rem;
+  color: #f87171;
+  font-size: 0.875rem;
+  text-align: center;
+  display: none;
+}
+
+/* ===== App Shell ===== */
+#app { display: none; flex-direction: column; min-height: 100vh; }
+
+/* ===== Header ===== */
+.header {
+  background: #1e2230;
+  border-bottom: 1px solid #2d3448;
+  padding: 0.75rem 1.25rem;
+  display: flex; align-items: center; gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.header-title {
+  font-size: 1.125rem; font-weight: 700;
+  color: #f1f5f9; flex: 1;
+  min-width: 0;
+}
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #6b7280; flex-shrink: 0;
+  transition: background 0.3s;
+}
+.status-dot.ok { background: #22c55e; }
+.status-dot.err { background: #ef4444; }
+.logout-btn {
+  padding: 0.5rem 1rem;
+  background: transparent; border: 1px solid #3b4560;
+  border-radius: 6px; color: #94a3b8;
+  font-size: 0.875rem; cursor: pointer;
+  min-height: 36px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.logout-btn:hover { border-color: #ef4444; color: #ef4444; }
+
+/* ===== Main Content ===== */
+.main { padding: 1.25rem; flex: 1; max-width: 1400px; width: 100%; margin: 0 auto; }
+
+/* ===== Section heading ===== */
+.section-heading {
+  font-size: 1rem; font-weight: 600;
+  color: #94a3b8; text-transform: uppercase;
+  letter-spacing: 0.05em; margin: 1.5rem 0 0.75rem;
+}
+.section-heading:first-child { margin-top: 0; }
+
+/* ===== Overview cards grid ===== */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.card {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+.card-title {
+  font-size: 0.8125rem; font-weight: 600;
+  color: #94a3b8; text-transform: uppercase;
+  letter-spacing: 0.04em; margin-bottom: 0.75rem;
+}
+.stat-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #232740;
+  font-size: 0.9375rem;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: #94a3b8; }
+.stat-value { color: #e2e8f0; font-weight: 500; text-align: right; max-width: 60%; word-break: break-all; }
+.badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.badge-ok { background: #14532d; color: #86efac; border: 1px solid #166534; }
+.badge-ng { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+
+/* ===== Guild table ===== */
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  background: #1e2230;
+}
+table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.875rem; min-width: 800px;
+}
+thead { background: #232740; }
+th {
+  padding: 0.625rem 0.875rem;
+  text-align: left;
+  color: #94a3b8; font-weight: 600;
+  font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+td {
+  padding: 0.625rem 0.875rem;
+  border-top: 1px solid #232740;
+  vertical-align: top;
+  color: #e2e8f0;
+}
+tr.idle-row td { color: #6b7280; }
+.track-link { color: #60a5fa; }
+.mode-badge {
+  display: inline-block;
+  padding: 0.125rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem; font-weight: 600;
+  background: #1e3a5f; color: #93c5fd;
+  border: 1px solid #1d4ed8;
+  white-space: nowrap;
+}
+.state-badge {
+  display: inline-block;
+  padding: 0.125rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem; font-weight: 600;
+  white-space: nowrap; margin-right: 0.2rem;
+}
+.state-playing { background: #14532d; color: #86efac; border: 1px solid #166534; }
+.state-paused  { background: #78350f; color: #fde68a; border: 1px solid #92400e; }
+.state-loading { background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8; }
+.state-stopped { background: #1f2937; color: #9ca3af; border: 1px solid #374151; }
+.action-btns { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.action-btn {
+  padding: 0.3125rem 0.625rem;
+  border-radius: 5px; border: 1px solid #3b4560;
+  background: transparent; color: #cbd5e1;
+  font-size: 0.8125rem; cursor: pointer;
+  min-height: 32px; /* above 24px AA floor; visually compact but accessible */
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.action-btn:hover:not(:disabled) { background: #2d3448; border-color: #60a5fa; color: #e2e8f0; }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.action-btn-danger:hover:not(:disabled) { border-color: #ef4444; color: #ef4444; background: #450a0a22; }
+
+/* ===== Error log ===== */
+.log-controls { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.filter-btn {
+  padding: 0.4375rem 0.875rem;
+  border-radius: 6px; border: 1px solid #3b4560;
+  background: transparent; color: #94a3b8;
+  font-size: 0.875rem; cursor: pointer;
+  min-height: 36px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.filter-btn.active {
+  background: #1e3a5f; border-color: #3b82f6; color: #93c5fd;
+}
+.filter-btn:hover:not(.active) { background: #2d3448; border-color: #475569; color: #e2e8f0; }
+.log-container {
+  background: #0f1117;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 0.5rem 0;
+}
+.log-row {
+  display: block;
+  padding: 0.25rem 0.875rem;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  border-bottom: 1px solid #1a1f2e;
+}
+.log-row:last-child { border-bottom: none; }
+.log-time { color: #64748b; }
+.log-level-error { color: #f87171; font-weight: 700; }
+.log-level-warning { color: #fbbf24; font-weight: 700; }
+.log-level-info { color: #60a5fa; font-weight: 700; }
+.log-level-debug { color: #94a3b8; }
+.log-logger { color: #a78bfa; }
+.log-msg { color: #cbd5e1; white-space: pre-wrap; word-break: break-all; }
+.log-summary-btn {
+  background: none; border: none; cursor: pointer;
+  padding: 0; font: inherit;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 0.8125rem;
+}
+.log-summary-btn:focus-visible { outline: 2px solid #60a5fa; outline-offset: 1px; }
+details[open] .log-msg-full { display: block; }
+.log-msg-full { white-space: pre-wrap; word-break: break-all; color: #94a3b8; }
+.log-empty { padding: 1.25rem; text-align: center; color: #475569; font-size: 0.875rem; }
+
+/* ===== Toast ===== */
+#toast-container {
+  position: fixed; bottom: 1.25rem; right: 1.25rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  z-index: 9999; pointer-events: none;
+}
+.toast {
+  padding: 0.75rem 1.125rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  max-width: 320px;
+  box-shadow: 0 4px 16px #00000080;
+  animation: toast-in 0.2s ease;
+  pointer-events: auto;
+}
+.toast-ok { background: #1e2a3a; border: 1px solid #1d4ed8; color: #93c5fd; }
+.toast-err { background: #2d1010; border: 1px solid #7f1d1d; color: #fca5a5; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Broadcast composer ===== */
+.broadcast-card {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+}
+.bc-label {
+  display: block;
+  font-size: 0.875rem;
+  color: #94a3b8;
+  margin-bottom: 0.375rem;
+  margin-top: 0.875rem;
+}
+.bc-label:first-of-type { margin-top: 0; }
+.bc-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  background: #0f1117;
+  border: 1px solid #3b4560;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.bc-input:focus { outline: 2px solid #60a5fa; outline-offset: 0; border-color: #60a5fa; }
+.bc-textarea {
+  resize: vertical;
+  min-height: 6.5rem;
+}
+.bc-radio-group {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+.bc-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9375rem;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+.bc-radio-label input[type="radio"] { accent-color: #3b82f6; width: 1rem; height: 1rem; cursor: pointer; }
+#bc-targets-container {
+  display: none;
+  margin-top: 0.75rem;
+  background: #0f1117;
+  border: 1px solid #2d3448;
+  border-radius: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.bc-target-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-bottom: 1px solid #1a1f2e;
+  font-size: 0.875rem;
+}
+.bc-target-row:last-child { border-bottom: none; }
+.bc-target-row input[type="checkbox"] { accent-color: #3b82f6; width: 1rem; height: 1rem; cursor: pointer; flex-shrink: 0; }
+.bc-target-row input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.4; }
+.bc-target-name { color: #e2e8f0; flex: 1; min-width: 0; word-break: break-all; }
+.bc-target-count { color: #64748b; font-size: 0.75rem; flex-shrink: 0; }
+.bc-target-ch-ok   { color: #86efac; font-size: 0.75rem; flex-shrink: 0; }
+.bc-target-ch-sys  { color: #93c5fd; font-size: 0.75rem; flex-shrink: 0; }
+.bc-target-ch-none { color: #f87171; font-size: 0.75rem; flex-shrink: 0; }
+.bc-send-btn {
+  margin-top: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  transition: background 0.15s;
+}
+.bc-send-btn:hover:not(:disabled) { background: #2563eb; }
+.bc-send-btn:active:not(:disabled) { background: #1d4ed8; }
+.bc-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ===== Broadcast results table ===== */
+.bc-results-wrapper {
+  display: none;
+  overflow-x: auto;
+  border: 1px solid #2d3448;
+  border-radius: 8px;
+  background: #1e2230;
+  margin-top: 1rem;
+}
+.bc-results-wrapper table { min-width: 480px; }
+
+/* ===== Announcement history ===== */
+.announce-list {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.announce-empty {
+  padding: 1.25rem;
+  text-align: center;
+  color: #475569;
+  font-size: 0.875rem;
+}
+.announce-details {
+  border-bottom: 1px solid #232740;
+}
+.announce-details:last-child { border-bottom: none; }
+.announce-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.875rem;
+  flex-wrap: wrap;
+  user-select: none;
+}
+.announce-summary::-webkit-details-marker { display: none; }
+.announce-summary:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; }
+.announce-summary:hover { background: #232740; }
+.announce-time { color: #64748b; white-space: nowrap; }
+.announce-title { color: #e2e8f0; font-weight: 500; flex: 1; min-width: 0; word-break: break-all; }
+.announce-stat { color: #94a3b8; font-size: 0.8125rem; white-space: nowrap; }
+.announce-body-wrap {
+  padding: 0.625rem 0.875rem 0.875rem 1.5rem;
+  border-top: 1px solid #1a1f2e;
+}
+.announce-fullbody {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.875rem;
+  color: #cbd5e1;
+  background: #0f1117;
+  border: 1px solid #232740;
+  border-radius: 6px;
+  padding: 0.625rem 0.875rem;
+  margin-bottom: 0.75rem;
+}
+.badge-all          { background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8; }
+.badge-selected     { background: #3b1f5f; color: #c4b5fd; border: 1px solid #6d28d9; }
+.badge-unconfigured { background: #3b2500; color: #fdba74; border: 1px solid #92400e; }
+.badge-sent     { background: #14532d; color: #86efac; border: 1px solid #166534; }
+.badge-skipped  { background: #1f2937; color: #9ca3af; border: 1px solid #374151; }
+.badge-failed   { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+
+/* ===== Broadcast embed / image options ===== */
+.bc-options-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.625rem;
+}
+.bc-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9375rem;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+.bc-checkbox-label input[type="checkbox"] { accent-color: #3b82f6; width: 1rem; height: 1rem; cursor: pointer; }
+.bc-color-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+.bc-color-label input[type="color"] {
+  width: 2rem; height: 1.625rem;
+  border: 1px solid #3b4560;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.bc-color-label input[type="color"]:disabled { opacity: 0.35; cursor: not-allowed; }
+.bc-hint {
+  font-size: 0.8125rem;
+  color: #64748b;
+  margin-top: 0.375rem;
+}
+.bc-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.625rem;
+}
+.bc-file-label-btn {
+  padding: 0.375rem 0.75rem;
+  border-radius: 5px;
+  border: 1px solid #3b4560;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 0.875rem;
+  cursor: pointer;
+  min-height: 32px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.bc-file-label-btn:hover { background: #2d3448; border-color: #60a5fa; }
+.bc-file-name {
+  font-size: 0.8125rem;
+  color: #94a3b8;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+.bc-file-clear {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #3b4560;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  min-height: 28px;
+  transition: border-color 0.12s, color 0.12s;
+}
+.bc-file-clear:hover { border-color: #ef4444; color: #ef4444; }
+.bc-file-meta-label {
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+.bc-unconf-readonly-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-bottom: 1px solid #1a1f2e;
+  font-size: 0.875rem;
+}
+.bc-unconf-readonly-row:last-child { border-bottom: none; }
+
+/* ===== Utilities ===== */
+.em-dash { color: #475569; }
+.announce-img-attach { color: #64748b; font-size: 0.8125rem; margin-left: 0.25rem; }
+
+/* ===== Guild History Modal (ghm-) ===== */
+.ghm-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 10000;
+  align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.ghm-overlay.ghm-open { display: flex; }
+.ghm-panel {
+  background: #1e2230;
+  border: 1px solid #2d3448;
+  border-radius: 10px;
+  width: 100%; max-width: 720px;
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 40px #00000090;
+}
+.ghm-header {
+  display: flex; align-items: baseline; gap: 0.75rem;
+  padding: 0.875rem 1.125rem 0.75rem;
+  border-bottom: 1px solid #2d3448;
+  flex-shrink: 0; flex-wrap: wrap;
+}
+.ghm-title {
+  font-size: 1rem; font-weight: 700;
+  color: #f1f5f9; flex: 1; min-width: 0;
+  word-break: break-all;
+}
+.ghm-total {
+  font-size: 0.8125rem; color: #94a3b8;
+  white-space: nowrap;
+}
+.ghm-close {
+  padding: 0.25rem 0.5rem;
+  background: transparent; border: 1px solid #3b4560;
+  border-radius: 5px; color: #94a3b8;
+  font-size: 1rem; cursor: pointer;
+  min-height: 32px; min-width: 32px;
+  line-height: 1; flex-shrink: 0;
+  transition: border-color 0.12s, color 0.12s;
+}
+.ghm-close:hover { border-color: #ef4444; color: #ef4444; }
+.ghm-body {
+  flex: 1; overflow-y: auto; padding: 0;
+}
+.ghm-table-wrap {
+  overflow-x: auto;
+}
+.ghm-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.875rem; min-width: 480px;
+}
+.ghm-table thead { background: #232740; }
+.ghm-table th {
+  padding: 0.5rem 0.875rem;
+  text-align: left; color: #94a3b8;
+  font-weight: 600; font-size: 0.8125rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.ghm-table td {
+  padding: 0.5rem 0.875rem;
+  border-top: 1px solid #232740;
+  vertical-align: top; color: #e2e8f0;
+}
+.ghm-ts { color: #94a3b8; white-space: nowrap; font-size: 0.8125rem; }
+.ghm-track-link { color: #60a5fa; }
+.ghm-user { color: #cbd5e1; }
+.ghm-empty {
+  padding: 1.5rem; text-align: center;
+  color: #475569; font-size: 0.875rem;
+}
+.ghm-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.75rem; padding: 0.625rem 1.125rem;
+  border-top: 1px solid #2d3448; flex-shrink: 0;
+}
+.ghm-page-info {
+  font-size: 0.875rem; color: #94a3b8;
+  white-space: nowrap;
+}
+.ghm-nav-btns { display: flex; gap: 0.375rem; }
+</style>
+</head>
+<body>
+
+<!-- Token gate -->
+<div id="gate">
+  <div class="gate-card">
+    <h1 class="gate-title">OGA_Music 管理</h1>
+    <label class="gate-label" for="token-input">管理トークン</label>
+    <input id="token-input" class="gate-input" type="password" autocomplete="current-password" placeholder="トークンを入力">
+    <button id="token-save-btn" class="gate-btn">保存</button>
+    <p id="gate-error" class="gate-error" role="alert" aria-live="assertive">トークンが無効です</p>
+  </div>
+</div>
+
+<!-- App shell -->
+<div id="app">
+  <header class="header">
+    <h1 class="header-title">OGA_Music 管理ダッシュボード</h1>
+    <div id="status-dot" class="status-dot" title="最終ポーリング: 不明" aria-label="通信状態"></div>
+    <button id="logout-btn" class="logout-btn">ログアウト</button>
+  </header>
+
+  <main class="main">
+    <!-- Overview -->
+    <h2 class="section-heading">概要</h2>
+    <div class="cards-grid" id="overview-cards">
+      <!-- rendered by JS -->
+    </div>
+
+    <!-- Guilds -->
+    <h2 class="section-heading">サーバー一覧</h2>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>サーバー名</th>
+            <th>VC</th>
+            <th>再生中</th>
+            <th>状態</th>
+            <th>キュー数</th>
+            <th>WS数</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="guild-tbody">
+          <tr><td colspan="7" class="log-empty">読み込み中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Broadcast composer -->
+    <h2 class="section-heading">お知らせ配信</h2>
+    <div class="broadcast-card">
+      <label class="bc-label" for="bc-title-input">件名</label>
+      <input id="bc-title-input" class="bc-input" type="text" placeholder="お知らせ" maxlength="256">
+
+      <label class="bc-label" for="bc-body-input">本文</label>
+      <textarea id="bc-body-input" class="bc-input bc-textarea" maxlength="4000" rows="5" placeholder="本文を入力…"></textarea>
+
+      <!-- Embed options -->
+      <div class="bc-options-row">
+        <label class="bc-checkbox-label">
+          <input type="checkbox" id="bc-use-embed" checked>
+          カード枠 (Embed) を使う
+        </label>
+        <label class="bc-color-label" id="bc-color-label">
+          枠の色
+          <input type="color" id="bc-color-input" value="#1db954">
+        </label>
+      </div>
+      <p class="bc-hint" id="bc-embed-hint"></p>
+
+      <!-- Image attach -->
+      <div class="bc-file-row">
+        <span class="bc-file-meta-label">画像 (任意, 8MBまで)</span>
+        <label class="bc-file-label-btn" for="bc-image-input">ファイルを選択</label>
+        <input type="file" id="bc-image-input" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none;">
+        <span class="bc-file-name" id="bc-file-name">選択なし</span>
+        <button type="button" class="bc-file-clear" id="bc-image-clear" style="display:none;">クリア</button>
+      </div>
+
+      <label class="bc-label">配信先</label>
+      <div class="bc-radio-group" role="radiogroup" aria-label="配信先">
+        <label class="bc-radio-label">
+          <input type="radio" name="bc-target" id="bc-radio-all" value="all" checked>
+          全サーバー
+        </label>
+        <label class="bc-radio-label">
+          <input type="radio" name="bc-target" id="bc-radio-selected" value="selected">
+          選択したサーバー
+        </label>
+        <label class="bc-radio-label">
+          <input type="radio" name="bc-target" id="bc-radio-unconfigured" value="unconfigured">
+          未設定のサーバー
+        </label>
+      </div>
+
+      <div id="bc-targets-container" aria-label="配信先サーバー一覧">
+        <!-- rendered by JS -->
+      </div>
+
+      <button id="bc-send-btn" class="bc-send-btn" disabled>送信</button>
+
+      <div class="bc-results-wrapper" id="bc-results-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>サーバー</th>
+              <th>結果</th>
+              <th>詳細</th>
+            </tr>
+          </thead>
+          <tbody id="bc-results-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Announcement history -->
+    <h2 class="section-heading">送信履歴</h2>
+    <div id="announce-list" class="announce-list">
+      <p class="announce-empty">読み込み中…</p>
+    </div>
+
+    <!-- Error log -->
+    <h2 class="section-heading">エラーログ</h2>
+    <div class="log-controls" role="group" aria-label="ログフィルター">
+      <button class="filter-btn active" id="filter-all">全て</button>
+      <button class="filter-btn" id="filter-error">ERROR のみ</button>
+    </div>
+    <div class="log-container" id="log-container" aria-label="エラーログ" role="log" aria-live="off">
+      <p class="log-empty">読み込み中…</p>
+    </div>
+  </main>
+</div>
+
+<!-- Guild history modal -->
+<div id="ghm-overlay" class="ghm-overlay" aria-modal="true" role="dialog" aria-label="再生履歴">
+  <div class="ghm-panel" id="ghm-panel">
+    <div class="ghm-header">
+      <span class="ghm-title" id="ghm-title">再生履歴</span>
+      <span class="ghm-total" id="ghm-total"></span>
+      <button class="ghm-close" id="ghm-close" aria-label="閉じる">✕</button>
+    </div>
+    <div class="ghm-body" id="ghm-body">
+      <div class="ghm-table-wrap">
+        <table class="ghm-table" id="ghm-table">
+          <thead>
+            <tr>
+              <th>時刻</th>
+              <th>曲</th>
+              <th>ユーザー</th>
+            </tr>
+          </thead>
+          <tbody id="ghm-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="ghm-footer">
+      <div class="ghm-nav-btns">
+        <button class="action-btn" id="ghm-prev">前へ</button>
+        <button class="action-btn" id="ghm-next">次へ</button>
+      </div>
+      <span class="ghm-page-info" id="ghm-page-info">ページ 1 / 1</span>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<script>
+'use strict';
+
+// ===== State =====
+let token = null;
+let pollingHandles = { overview: null, guilds: null, errors: null };
+let lastErrors = [];
+let errorFilter = 'all'; // 'all' | 'error'
+let pollingActive = false;
+
+// ===== DOM refs =====
+const gateEl      = document.getElementById('gate');
+const appEl       = document.getElementById('app');
+const tokenInput  = document.getElementById('token-input');
+const tokenSaveBtn= document.getElementById('token-save-btn');
+const gateError   = document.getElementById('gate-error');
+const statusDot   = document.getElementById('status-dot');
+const logoutBtn   = document.getElementById('logout-btn');
+const overviewEl  = document.getElementById('overview-cards');
+const guildTbody  = document.getElementById('guild-tbody');
+const logContainer= document.getElementById('log-container');
+const filterAllBtn= document.getElementById('filter-all');
+const filterErrBtn= document.getElementById('filter-error');
+
+// ===== API helper =====
+async function api(path, opts = {}) {
+  const headers = { 'Authorization': 'Bearer ' + token, ...(opts.headers || {}) };
+  const res = await fetch(path, { ...opts, headers });
+  if (res.status === 401) {
+    onUnauthorized();
+    throw new Error('401');
+  }
+  return res;
+}
+
+function onUnauthorized() {
+  stopPolling();
+  localStorage.removeItem('smilemusic_admin_token');
+  token = null;
+  gateError.style.display = 'block';
+  showGate();
+}
+
+// ===== Gate =====
+function showGate() {
+  gateEl.style.display = 'flex';
+  appEl.style.display = 'none';
+}
+function showApp() {
+  gateEl.style.display = 'none';
+  appEl.style.display = 'flex';
+  appEl.style.flexDirection = 'column';
+}
+
+function saveToken() {
+  const val = tokenInput.value.trim();
+  if (!val) return;
+  token = val;
+  localStorage.setItem('smilemusic_admin_token', val);
+  gateError.style.display = 'none';
+  tokenInput.value = '';
+  showApp();
+  startPolling();
+}
+
+tokenSaveBtn.addEventListener('click', saveToken);
+tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveToken(); });
+
+logoutBtn.addEventListener('click', () => {
+  stopPolling();
+  localStorage.removeItem('smilemusic_admin_token');
+  token = null;
+  gateError.style.display = 'none';
+  showGate();
+});
+
+// ===== Polling control =====
+function startPolling() {
+  if (pollingActive) return;
+  pollingActive = true;
+  fetchOverview();
+  fetchGuilds();
+  fetchErrors();
+  fetchAnnouncements(); // one-shot at startup; also re-fetched after each broadcast
+  pollingHandles.overview = setInterval(fetchOverview, 3000);
+  pollingHandles.guilds   = setInterval(fetchGuilds,   3000);
+  pollingHandles.errors   = setInterval(fetchErrors,  10000);
+}
+function stopPolling() {
+  pollingActive = false;
+  clearInterval(pollingHandles.overview);
+  clearInterval(pollingHandles.guilds);
+  clearInterval(pollingHandles.errors);
+}
+
+// Pause while hidden, resume + refresh on visible
+document.addEventListener('visibilitychange', () => {
+  if (!token) return;
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    pollingActive = false; // allow startPolling to proceed
+    startPolling();
+  }
+});
+
+// ===== Status dot =====
+function setStatus(ok) {
+  statusDot.className = 'status-dot ' + (ok ? 'ok' : 'err');
+  statusDot.title = '最終ポーリング: ' + new Date().toLocaleTimeString('ja-JP') + (ok ? ' ✓' : ' ✗');
+}
+
+// ===== Formatting helpers =====
+function fmt(v, suffix) {
+  if (v === null || v === undefined) return '—';
+  return String(v) + (suffix || '');
+}
+function fmtMs(v) { return v === null || v === undefined ? '—' : v.toFixed(1) + ' ms'; }
+function fmtMB(bytes) {
+  if (bytes === null || bytes === undefined) return '—';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+function fmtRate(bps) {
+  if (bps === null || bps === undefined) return '—';
+  if (bps >= 1048576) return (bps / 1048576).toFixed(1) + ' MB/s';
+  if (bps >= 1024) return (bps / 1024).toFixed(1) + ' KB/s';
+  return Math.round(bps) + ' B/s';
+}
+function fmtUptime(secs) {
+  if (secs === null || secs === undefined) return '—';
+  const s = Math.floor(secs);
+  const days = Math.floor(s / 86400);
+  const h    = Math.floor((s % 86400) / 3600);
+  const m    = Math.floor((s % 3600) / 60);
+  const sec  = s % 60;
+  const hms  = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+  return days > 0 ? days + '日 ' + hms : hms;
+}
+function fmtDuration(ms) {
+  if (ms === null || ms === undefined) return '--:--';
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function makeStatRow(label, value) {
+  const row = document.createElement('div');
+  row.className = 'stat-row';
+  const lbl = document.createElement('span');
+  lbl.className = 'stat-label';
+  lbl.textContent = label;
+  const val = document.createElement('span');
+  val.className = 'stat-value';
+  if (value === '—') { val.className += ' em-dash'; val.textContent = '—'; }
+  else val.textContent = value;
+  row.appendChild(lbl);
+  row.appendChild(val);
+  return row;
+}
+
+function makeBadge(text, cls) {
+  const b = document.createElement('span');
+  b.className = 'badge ' + cls;
+  b.textContent = text;
+  return b;
+}
+
+function makeCard(title, rows) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const h = document.createElement('div');
+  h.className = 'card-title';
+  h.textContent = title;
+  card.appendChild(h);
+  rows.forEach(([label, value]) => card.appendChild(makeStatRow(label, value)));
+  return card;
+}
+
+// ===== Overview =====
+async function fetchOverview() {
+  try {
+    const res = await api('/api/admin/overview');
+    if (!res.ok) { setStatus(false); return; }
+    const d = await res.json();
+    setStatus(true);
+    renderOverview(d);
+  } catch (e) {
+    if (e.message !== '401') setStatus(false);
+  }
+}
+
+function renderOverview(d) {
+  const b = d.bot || {};
+  // 製品名 + チャンネル名 (アルファ/ベータ/リリース) をサーバーから受けて動的に反映
+  if (b.product_name) {
+    const label = b.product_name + (b.channel_name ? ' ' + b.channel_name : '');
+    document.title = label + ' 管理';
+    document.querySelector('.header-title').textContent = label + ' 管理ダッシュボード';
+    document.querySelector('.gate-title').textContent = label + ' 管理';
+  }
+  const sy = d.system || {};
+  const dc = d.discord || {};
+  const db = d.db || {};
+  const ac = d.activity || {};
+
+  overviewEl.innerHTML = '';
+
+  // 稼働状況 (ライブラリバージョンはサーバー側の versions のキー順で並ぶ)
+  const verRows = Object.entries(b.versions || {}).map(([name, v]) => [name, fmt(v)]);
+  overviewEl.appendChild(makeCard('稼働状況', [
+    ['稼働時間',   fmtUptime(b.uptime_s)],
+    ['サーバー数', fmt(b.guild_count)],
+    ['環境',       fmt(b.env)],
+    ['Python',     fmt(sy.python)],
+    ...verRows,
+  ]));
+
+  // システム (Disk はコンテナ全体 = cgroup。取れない環境では bot プロセスのみ)
+  const diskSuffix = sy.disk_scope === 'process' ? ' (botのみ)' : '';
+  overviewEl.appendChild(makeCard('システム', [
+    ['CPU',         fmt(sy.cpu_percent, ' %')],
+    ['メモリ',      fmtMB(sy.rss_bytes)],
+    ['ループ遅延 avg', fmtMs(sy.loop_lag_ms_avg)],
+    ['ループ遅延 max', fmtMs(sy.loop_lag_ms_max)],
+    ['NW 受信',     fmtRate(sy.net_rx_bps)],
+    ['NW 送信',     fmtRate(sy.net_tx_bps)],
+    ['Disk 読取' + diskSuffix, fmtRate(sy.disk_read_bps)],
+    ['Disk 書込' + diskSuffix, fmtRate(sy.disk_write_bps)],
+  ]));
+
+  // Discord接続
+  overviewEl.appendChild(makeCard('Discord 接続', [
+    ['レイテンシ',   fmtMs(dc.latency_ms)],
+    ['準備完了',     dc.is_ready === null ? '—' : (dc.is_ready ? '✓' : '✗')],
+    ['再接続回数',   fmt(dc.reconnect_count)],
+    ['切断回数',     fmt(dc.disconnect_count)],
+    ['Gateway 稼働', fmtUptime(dc.gateway_uptime_s)],
+  ]));
+
+  // DB
+  const dbCard = document.createElement('div');
+  dbCard.className = 'card';
+  const dbH = document.createElement('div');
+  dbH.className = 'card-title';
+  dbH.textContent = 'DB';
+  dbCard.appendChild(dbH);
+
+  const statusRow = document.createElement('div');
+  statusRow.className = 'stat-row';
+  const statusLbl = document.createElement('span');
+  statusLbl.className = 'stat-label';
+  statusLbl.textContent = '状態';
+  const statusVal = document.createElement('span');
+  statusVal.className = 'stat-value';
+  if (db.ok === true) statusVal.appendChild(makeBadge('OK', 'badge-ok'));
+  else if (db.ok === false) statusVal.appendChild(makeBadge('NG', 'badge-ng'));
+  else statusVal.textContent = '—';
+  statusRow.appendChild(statusLbl);
+  statusRow.appendChild(statusVal);
+  dbCard.appendChild(statusRow);
+
+  [
+    ['レイテンシ',          fmtMs(db.latency_ms)],
+    ['履歴 (行)',           fmt(db.history_rows)],
+    ['プレイリスト (行)',   fmt(db.playlist_rows)],
+    ['トラック (行)',       fmt(db.playlist_track_rows)],
+    ['ギルド設定 (行)',     fmt(db.guild_setting_rows)],
+  ].forEach(([l, v]) => dbCard.appendChild(makeStatRow(l, v)));
+  overviewEl.appendChild(dbCard);
+
+  // Activity
+  overviewEl.appendChild(makeCard('Activity', [
+    ['WS 接続数', fmt(ac.total_ws_connections)],
+  ]));
+}
+
+// ===== Guilds =====
+async function fetchGuilds() {
+  try {
+    const res = await api('/api/admin/guilds');
+    if (!res.ok) { setStatus(false); return; }
+    const d = await res.json();
+    setStatus(true);
+    renderGuilds(d.guilds || []);
+  } catch (e) {
+    if (e.message !== '401') setStatus(false);
+  }
+}
+
+// Track which guild rows have in-flight actions
+const guildActionInFlight = new Set();
+
+function renderGuilds(guilds) {
+  const active = guilds.filter(g => g.playing || (g.voice && g.voice.connected));
+  const idle   = guilds.filter(g => !g.playing && !(g.voice && g.voice.connected));
+  const sorted = [...active, ...idle];
+
+  guildTbody.innerHTML = '';
+  if (sorted.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 7;
+    td.className = 'log-empty';
+    td.textContent = 'サーバーなし';
+    tr.appendChild(td);
+    guildTbody.appendChild(tr);
+    return;
+  }
+
+  sorted.forEach(guild => {
+    const isIdle = !guild.playing && !(guild.voice && guild.voice.connected);
+    const tr = document.createElement('tr');
+    if (isIdle) tr.className = 'idle-row';
+
+    // Server name + member count
+    const tdName = document.createElement('td');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = guild.name || guild.id;
+    tdName.appendChild(nameSpan);
+    if (guild.member_count !== undefined && guild.member_count !== null) {
+      const small = document.createElement('span');
+      small.style.cssText = 'font-size:0.75rem;color:#64748b;margin-left:0.4rem;';
+      small.textContent = guild.member_count + '人';
+      tdName.appendChild(small);
+    }
+    tr.appendChild(tdName);
+
+    // VC
+    const tdVc = document.createElement('td');
+    const vc = guild.voice || {};
+    tdVc.textContent = vc.connected && vc.channel ? vc.channel : '未接続';
+    tr.appendChild(tdVc);
+
+    // 再生中
+    const tdPlay = document.createElement('td');
+    const pl = guild.playing;
+    if (pl && pl.track) {
+      const t = pl.track;
+      if (t.url) {
+        const a = document.createElement('a');
+        a.className = 'track-link';
+        a.href = t.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = t.title || t.url;
+        tdPlay.appendChild(a);
+      } else {
+        const span = document.createElement('span');
+        span.textContent = t.title || '—';
+        tdPlay.appendChild(span);
+      }
+      // Progress
+      const prog = document.createElement('div');
+      prog.style.cssText = 'font-size:0.75rem;color:#64748b;margin-top:0.2rem;';
+      prog.textContent = fmtDuration(pl.position_ms) + ' / ' + fmtDuration(t.duration_ms);
+      tdPlay.appendChild(prog);
+      // Mode badge
+      if (pl.mode) {
+        const modeDiv = document.createElement('div');
+        modeDiv.style.marginTop = '0.25rem';
+        const mb = document.createElement('span');
+        mb.className = 'mode-badge';
+        let modeText = pl.mode === 'playlist' ? 'プレイリスト' : 'キュー';
+        if (pl.mode === 'playlist' && pl.playlist) {
+          modeText += ' ' + String(pl.playlist.index + 1) + '/' + pl.playlist.total;
+          if (pl.playlist.name) modeText += ' ' + pl.playlist.name;
+        }
+        mb.textContent = modeText;
+        modeDiv.appendChild(mb);
+        tdPlay.appendChild(modeDiv);
+      }
+    } else {
+      tdPlay.textContent = '—';
+    }
+    tr.appendChild(tdPlay);
+
+    // 状態
+    const tdState = document.createElement('td');
+    if (pl) {
+      if (pl.loading) {
+        tdState.appendChild(makeStateBadge('読込中', 'state-loading'));
+      } else if (pl.is_playing && !pl.paused) {
+        tdState.appendChild(makeStateBadge('再生中', 'state-playing'));
+      } else if (pl.paused) {
+        tdState.appendChild(makeStateBadge('一時停止', 'state-paused'));
+      } else {
+        tdState.appendChild(makeStateBadge('停止中', 'state-stopped'));
+      }
+    } else {
+      tdState.appendChild(makeStateBadge('停止中', 'state-stopped'));
+    }
+    tr.appendChild(tdState);
+
+    // キュー数
+    const tdQ = document.createElement('td');
+    tdQ.textContent = pl ? fmt(pl.queue_length) : '—';
+    tr.appendChild(tdQ);
+
+    // WS数
+    const tdWs = document.createElement('td');
+    tdWs.textContent = fmt(guild.ws_connections);
+    tr.appendChild(tdWs);
+
+    // 操作
+    const tdAct = document.createElement('td');
+    const btns = document.createElement('div');
+    btns.className = 'action-btns';
+
+    const actions = [
+      { label: 'スキップ',  action: 'skip',       danger: false },
+      { label: '一時停止',  action: 'pause',      danger: false },
+      { label: '再開',      action: 'resume',     danger: false },
+      { label: '停止',      action: 'stop',       danger: true  },
+      { label: '切断',      action: 'disconnect', danger: true  },
+    ];
+    const inFlight = guildActionInFlight.has(guild.id);
+
+    actions.forEach(({ label, action, danger }) => {
+      const btn = document.createElement('button');
+      btn.className = 'action-btn' + (danger ? ' action-btn-danger' : '');
+      btn.textContent = label;
+      btn.disabled = inFlight;
+      btn.setAttribute('aria-label', label + ' — ' + (guild.name || guild.id));
+      btn.addEventListener('click', async () => {
+        if (danger) {
+          const ok = window.confirm((guild.name || guild.id) + 'で「' + label + '」を実行しますか？');
+          if (!ok) return;
+        }
+        await doGuildAction(guild.id, action, btns);
+      });
+      btns.appendChild(btn);
+    });
+
+    // 履歴ボタン
+    const histBtn = document.createElement('button');
+    histBtn.className = 'action-btn';
+    histBtn.textContent = '履歴';
+    histBtn.setAttribute('aria-label', '再生履歴 — ' + (guild.name || guild.id));
+    histBtn.addEventListener('click', () => openHistoryModal(guild.id, guild.name || guild.id));
+    btns.appendChild(histBtn);
+
+    tdAct.appendChild(btns);
+    tr.appendChild(tdAct);
+
+    guildTbody.appendChild(tr);
+  });
+}
+
+function makeStateBadge(text, cls) {
+  const b = document.createElement('span');
+  b.className = 'state-badge ' + cls;
+  b.textContent = text;
+  return b;
+}
+
+async function doGuildAction(guildId, action, btnsEl) {
+  guildActionInFlight.add(guildId);
+  // この行のボタンを即時 disable する (ギルド名でのセレクタ検索はしない —
+  // 名前はユーザー制御値なのでセレクタ構文を壊し得る)
+  btnsEl.querySelectorAll('button').forEach(b => { b.disabled = true; });
+
+  try {
+    const res = await api('/api/admin/guilds/' + guildId + '/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    showToast(data.message || (data.ok ? '実行しました' : 'エラーが発生しました'), data.ok !== false);
+  } catch (e) {
+    if (e.message !== '401') showToast('ネットワークエラー', false);
+  } finally {
+    guildActionInFlight.delete(guildId);
+    await fetchGuilds();
+  }
+}
+
+// ===== Error log =====
+async function fetchErrors() {
+  try {
+    const res = await api('/api/admin/errors?limit=200');
+    if (!res.ok) { setStatus(false); return; }
+    const d = await res.json();
+    setStatus(true);
+    lastErrors = d.errors || [];
+    renderErrors();
+  } catch (e) {
+    if (e.message !== '401') setStatus(false);
+  }
+}
+
+filterAllBtn.addEventListener('click', () => {
+  errorFilter = 'all';
+  filterAllBtn.classList.add('active');
+  filterErrBtn.classList.remove('active');
+  renderErrors();
+});
+filterErrBtn.addEventListener('click', () => {
+  errorFilter = 'error';
+  filterErrBtn.classList.add('active');
+  filterAllBtn.classList.remove('active');
+  renderErrors();
+});
+
+function renderErrors() {
+  const list = errorFilter === 'error'
+    ? lastErrors.filter(e => e.level === 'ERROR')
+    : lastErrors;
+
+  logContainer.innerHTML = '';
+
+  if (list.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'log-empty';
+    p.textContent = 'ログなし';
+    logContainer.appendChild(p);
+    return;
+  }
+
+  list.forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'log-row';
+
+    const tsSpan = document.createElement('span');
+    tsSpan.className = 'log-time';
+    const d = new Date(entry.ts * 1000);
+    tsSpan.textContent = d.toLocaleTimeString('ja-JP', { hour12: false }) + ' ';
+    row.appendChild(tsSpan);
+
+    const lvl = (entry.level || '').toUpperCase();
+    const lvlSpan = document.createElement('span');
+    lvlSpan.className = 'log-level-' + (
+      lvl === 'ERROR'   ? 'error'   :
+      lvl === 'WARNING' ? 'warning' :
+      lvl === 'INFO'    ? 'info'    : 'debug'
+    );
+    lvlSpan.textContent = lvl + ' ';
+    row.appendChild(lvlSpan);
+
+    const loggerSpan = document.createElement('span');
+    loggerSpan.className = 'log-logger';
+    loggerSpan.textContent = (entry.logger || '') + ' ';
+    row.appendChild(loggerSpan);
+
+    const msg = entry.message || '';
+    const lines = msg.split('\n');
+
+    if (lines.length <= 1) {
+      const msgSpan = document.createElement('span');
+      msgSpan.className = 'log-msg';
+      msgSpan.textContent = msg;
+      row.appendChild(msgSpan);
+    } else {
+      // Multi-line: use details/summary for collapse
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.style.cssText = 'cursor:pointer;list-style:none;display:inline;';
+      summary.setAttribute('aria-label', '詳細を展開: ' + lines[0].slice(0, 80));
+      const summaryBtn = document.createElement('span');
+      summaryBtn.className = 'log-msg';
+      summaryBtn.textContent = lines[0] + ' ▶';
+      summary.appendChild(summaryBtn);
+      details.appendChild(summary);
+      const full = document.createElement('div');
+      full.className = 'log-msg-full';
+      full.textContent = lines.slice(1).join('\n');
+      details.appendChild(full);
+      row.appendChild(details);
+    }
+
+    logContainer.appendChild(row);
+  });
+}
+
+// ===== Broadcast composer =====
+const bcTitleInput        = document.getElementById('bc-title-input');
+const bcBodyInput         = document.getElementById('bc-body-input');
+const bcRadioAll          = document.getElementById('bc-radio-all');
+const bcRadioSelected     = document.getElementById('bc-radio-selected');
+const bcRadioUnconfigured = document.getElementById('bc-radio-unconfigured');
+const bcTargetsContainer  = document.getElementById('bc-targets-container');
+const bcSendBtn           = document.getElementById('bc-send-btn');
+const bcResultsWrapper    = document.getElementById('bc-results-wrapper');
+const bcResultsTbody      = document.getElementById('bc-results-tbody');
+const bcUseEmbed          = document.getElementById('bc-use-embed');
+const bcColorInput        = document.getElementById('bc-color-input');
+const bcColorLabel        = document.getElementById('bc-color-label');
+const bcEmbedHint         = document.getElementById('bc-embed-hint');
+const bcImageInput        = document.getElementById('bc-image-input');
+const bcFileNameSpan      = document.getElementById('bc-file-name');
+const bcImageClear        = document.getElementById('bc-image-clear');
+
+// Image state
+let bcImageData = null; // null | { filename, data_base64 }
+
+// Embed hint text helper
+function bcUpdateEmbedHint() {
+  if (bcUseEmbed.checked) {
+    bcEmbedHint.textContent = '[表示名](URL) 形式のリンクが使えます';
+    bcColorLabel.style.opacity = '1';
+    bcColorInput.disabled = false;
+  } else {
+    bcEmbedHint.textContent = 'プレーンメッセージで送信します (リンク記法は不可・件名+本文 合計1900文字まで)';
+    bcColorLabel.style.opacity = '0.4';
+    bcColorInput.disabled = true;
+  }
+}
+bcUseEmbed.addEventListener('change', bcUpdateEmbedHint);
+bcUpdateEmbedHint(); // initialize
+
+// Image file selection
+bcImageInput.addEventListener('change', () => {
+  const file = bcImageInput.files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    showToast('画像は8MB以下にしてください', false);
+    bcImageInput.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    const comma = dataUrl.indexOf(',');
+    const data_base64 = dataUrl.slice(comma + 1);
+    bcImageData = { filename: file.name, data_base64 };
+    bcFileNameSpan.textContent = file.name;
+    bcImageClear.style.display = '';
+  };
+  reader.readAsDataURL(file);
+});
+bcImageClear.addEventListener('click', () => {
+  bcImageData = null;
+  bcImageInput.value = '';
+  bcFileNameSpan.textContent = '選択なし';
+  bcImageClear.style.display = 'none';
+});
+
+// Enable/disable send button based on body content
+function bcUpdateSendBtn() {
+  bcSendBtn.disabled = bcBodyInput.value.trim().length === 0;
+}
+bcBodyInput.addEventListener('input', bcUpdateSendBtn);
+
+// Show/hide target list on radio change
+bcRadioAll.addEventListener('change', () => {
+  if (bcRadioAll.checked) {
+    bcTargetsContainer.style.display = 'none';
+  }
+});
+bcRadioSelected.addEventListener('change', () => {
+  if (bcRadioSelected.checked) {
+    bcTargetsContainer.style.display = 'block';
+    loadBroadcastTargets('selected');
+  }
+});
+bcRadioUnconfigured.addEventListener('change', () => {
+  if (bcRadioUnconfigured.checked) {
+    bcTargetsContainer.style.display = 'block';
+    loadBroadcastTargets('unconfigured');
+  }
+});
+
+// Fetched targets cache (refreshed each time 選択/未設定 radio is activated)
+let bcTargetsCache = [];
+
+async function loadBroadcastTargets(mode) {
+  // mode: 'selected' | 'unconfigured'
+  bcTargetsContainer.innerHTML = '';
+  const loading = document.createElement('p');
+  loading.className = 'announce-empty';
+  loading.textContent = '読み込み中…';
+  bcTargetsContainer.appendChild(loading);
+
+  try {
+    const res = await api('/api/admin/broadcast/targets');
+    if (!res.ok) {
+      bcTargetsContainer.innerHTML = '';
+      const err = document.createElement('p');
+      err.className = 'announce-empty';
+      err.textContent = '取得に失敗しました';
+      bcTargetsContainer.appendChild(err);
+      return;
+    }
+    const d = await res.json();
+    bcTargetsCache = d.targets || [];
+    if (mode === 'unconfigured') {
+      renderUnconfiguredTargets(bcTargetsCache.filter(t => t.channel_kind !== 'configured'));
+    } else {
+      renderBroadcastTargets(bcTargetsCache);
+    }
+  } catch (e) {
+    if (e.message !== '401') {
+      bcTargetsContainer.innerHTML = '';
+      const err = document.createElement('p');
+      err.className = 'announce-empty';
+      err.textContent = '取得に失敗しました';
+      bcTargetsContainer.appendChild(err);
+    }
+  }
+}
+
+function renderBroadcastTargets(targets) {
+  bcTargetsContainer.innerHTML = '';
+  if (targets.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'announce-empty';
+    p.textContent = 'サーバーなし';
+    bcTargetsContainer.appendChild(p);
+    return;
+  }
+
+  targets.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'bc-target-row';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = t.id;
+    cb.id = 'bc-cb-' + t.id;
+    const isNone = t.channel_kind === 'none';
+    cb.disabled = isNone;
+    row.appendChild(cb);
+
+    const nameLabel = document.createElement('label');
+    nameLabel.htmlFor = 'bc-cb-' + t.id;
+    nameLabel.className = 'bc-target-name';
+    nameLabel.textContent = t.name || t.id;
+    row.appendChild(nameLabel);
+
+    if (t.member_count !== null && t.member_count !== undefined) {
+      const cnt = document.createElement('span');
+      cnt.className = 'bc-target-count';
+      cnt.textContent = t.member_count + '人';
+      row.appendChild(cnt);
+    }
+
+    const chSpan = document.createElement('span');
+    if (t.channel_kind === 'configured') {
+      chSpan.className = 'bc-target-ch-ok';
+      chSpan.textContent = (t.channel || '') + ' (設定済)';
+    } else if (t.channel_kind === 'system') {
+      chSpan.className = 'bc-target-ch-sys';
+      chSpan.textContent = (t.channel || '') + ' (システムCH)';
+    } else {
+      chSpan.className = 'bc-target-ch-none';
+      chSpan.textContent = '配信不可';
+    }
+    row.appendChild(chSpan);
+
+    bcTargetsContainer.appendChild(row);
+  });
+}
+
+function renderUnconfiguredTargets(targets) {
+  bcTargetsContainer.innerHTML = '';
+  if (targets.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'announce-empty';
+    p.textContent = '未設定サーバーなし';
+    bcTargetsContainer.appendChild(p);
+    return;
+  }
+
+  targets.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'bc-unconf-readonly-row';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'bc-target-name';
+    nameSpan.textContent = t.name || t.id;
+    row.appendChild(nameSpan);
+
+    if (t.member_count !== null && t.member_count !== undefined) {
+      const cnt = document.createElement('span');
+      cnt.className = 'bc-target-count';
+      cnt.textContent = t.member_count + '人';
+      row.appendChild(cnt);
+    }
+
+    const chSpan = document.createElement('span');
+    if (t.channel_kind === 'system') {
+      chSpan.className = 'bc-target-ch-sys';
+      chSpan.textContent = (t.channel || '') + ' (システムCH)';
+    } else {
+      chSpan.className = 'bc-target-ch-none';
+      chSpan.textContent = '配信不可';
+    }
+    row.appendChild(chSpan);
+
+    bcTargetsContainer.appendChild(row);
+  });
+}
+
+bcSendBtn.addEventListener('click', async () => {
+  const body = bcBodyInput.value.trim();
+  if (!body) return;
+
+  const title = bcTitleInput.value.trim();
+  const useEmbed = bcUseEmbed.checked;
+
+  // Plain-text length validation
+  if (!useEmbed && (title.length + body.length > 1900)) {
+    showToast('件名+本文の合計が1900文字を超えています', false);
+    return;
+  }
+
+  const isAll            = bcRadioAll.checked;
+  const isSelected       = bcRadioSelected.checked;
+  const isUnconfigured   = bcRadioUnconfigured.checked;
+
+  let guildIds = null;
+  let targetCount = 0;
+  let targetMode = 'all';
+
+  if (isAll) {
+    targetMode = 'all';
+    // Fetch targets if not cached for count display in confirm dialog
+    if (bcTargetsCache.length === 0) {
+      try {
+        const res = await api('/api/admin/broadcast/targets');
+        if (res.ok) {
+          const d = await res.json();
+          bcTargetsCache = d.targets || [];
+        }
+      } catch (_) {}
+    }
+    targetCount = bcTargetsCache.length;
+  } else if (isSelected) {
+    targetMode = 'selected';
+    const checked = Array.from(
+      bcTargetsContainer.querySelectorAll('input[type="checkbox"]:checked')
+    );
+    if (checked.length === 0) {
+      showToast('配信先を選択してください', false);
+      return;
+    }
+    guildIds = checked.map(cb => cb.value);
+    targetCount = guildIds.length;
+  } else if (isUnconfigured) {
+    targetMode = 'unconfigured';
+    // Count is the number of unconfigured guilds currently shown
+    const unconfigured = bcTargetsCache.filter(t => t.channel_kind !== 'configured');
+    targetCount = unconfigured.length;
+    if (targetCount === 0) {
+      showToast('未設定サーバーがありません', false);
+      return;
+    }
+  }
+
+  const ok = window.confirm(targetCount + '件のサーバーに送信します。よろしいですか？');
+  if (!ok) return;
+
+  bcSendBtn.disabled = true;
+  bcSendBtn.textContent = '送信中…';
+
+  try {
+    const res = await api('/api/admin/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target: targetMode,
+        guild_ids: guildIds,
+        title: title || '',
+        body,
+        use_embed: useEmbed,
+        color: bcColorInput.value,
+        image: bcImageData,
+      }),
+    });
+
+    if (!res.ok) {
+      let msg = '送信に失敗しました';
+      try { const d = await res.json(); msg = d.detail || d.message || msg; } catch (_) {}
+      showToast(msg, false);
+      return;
+    }
+
+    const d = await res.json();
+    showToast('送信 ' + (d.sent || 0) + ' / スキップ ' + (d.skipped || 0) + ' / 失敗 ' + (d.failed || 0), true);
+
+    // Render results table
+    bcResultsTbody.innerHTML = '';
+    const results = d.results || [];
+    results.forEach(r => {
+      const tr = document.createElement('tr');
+
+      const tdName = document.createElement('td');
+      tdName.textContent = r.guild_name || r.guild_id;
+      tr.appendChild(tdName);
+
+      const tdStatus = document.createElement('td');
+      const st = (r.status || '').toLowerCase();
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + (
+        st === 'sent'    ? 'badge-sent'    :
+        st === 'skipped' ? 'badge-skipped' : 'badge-failed'
+      );
+      badge.textContent = st === 'sent' ? '送信' : st === 'skipped' ? 'スキップ' : '失敗';
+      tdStatus.appendChild(badge);
+      tr.appendChild(tdStatus);
+
+      const tdDetail = document.createElement('td');
+      tdDetail.textContent = r.detail || '';
+      tr.appendChild(tdDetail);
+
+      bcResultsTbody.appendChild(tr);
+    });
+    bcResultsWrapper.style.display = results.length > 0 ? 'block' : 'none';
+
+    // Clear inputs
+    bcTitleInput.value = '';
+    bcBodyInput.value = '';
+    // Clear image after successful send
+    bcImageData = null;
+    bcImageInput.value = '';
+    bcFileNameSpan.textContent = '選択なし';
+    bcImageClear.style.display = 'none';
+    bcUpdateSendBtn();
+
+    // Refresh history
+    fetchAnnouncements();
+
+  } catch (e) {
+    if (e.message !== '401') showToast('ネットワークエラー', false);
+  } finally {
+    bcSendBtn.textContent = '送信';
+    bcUpdateSendBtn(); // restore enabled state based on body content
+  }
+});
+
+// ===== Announcement history =====
+const announceListEl = document.getElementById('announce-list');
+
+async function fetchAnnouncements() {
+  try {
+    const res = await api('/api/admin/announcements?limit=20');
+    if (!res.ok) return;
+    const d = await res.json();
+    renderAnnouncements(d.announcements || []);
+  } catch (e) {
+    // silently ignore; not critical
+  }
+}
+
+function renderAnnouncements(announcements) {
+  announceListEl.innerHTML = '';
+
+  if (announcements.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'announce-empty';
+    p.textContent = '履歴なし';
+    announceListEl.appendChild(p);
+    return;
+  }
+
+  // Sort newest-first (API may already return sorted, but ensure it)
+  const sorted = announcements.slice().sort((a, b) => {
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+
+  sorted.forEach(ann => {
+    const details = document.createElement('details');
+    details.className = 'announce-details';
+
+    const summary = document.createElement('summary');
+    summary.className = 'announce-summary';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'announce-time';
+    const dt = new Date(ann.created_at);
+    timeSpan.textContent = dt.toLocaleString('ja-JP', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    summary.appendChild(timeSpan);
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'announce-title';
+    titleSpan.textContent = ann.title || '（無題）';
+    summary.appendChild(titleSpan);
+
+    const statSpan = document.createElement('span');
+    statSpan.className = 'announce-stat';
+    statSpan.textContent = '送信 ' + (ann.sent_count || 0) + ' / スキップ ' + (ann.skipped_count || 0) + ' / 失敗 ' + (ann.failed_count || 0);
+    summary.appendChild(statSpan);
+
+    const kindBadge = document.createElement('span');
+    if (ann.target_kind === 'all') {
+      kindBadge.className = 'badge badge-all';
+      kindBadge.textContent = '全サーバー';
+    } else if (ann.target_kind === 'unconfigured') {
+      kindBadge.className = 'badge badge-unconfigured';
+      kindBadge.textContent = '未設定宛';
+    } else {
+      kindBadge.className = 'badge badge-selected';
+      kindBadge.textContent = '選択';
+    }
+    summary.appendChild(kindBadge);
+
+    if (ann.image_filename) {
+      const imgSpan = document.createElement('span');
+      imgSpan.className = 'announce-img-attach';
+      imgSpan.textContent = '📎 ' + ann.image_filename;
+      summary.appendChild(imgSpan);
+    }
+
+    details.appendChild(summary);
+
+    // Expanded body
+    const bodyWrap = document.createElement('div');
+    bodyWrap.className = 'announce-body-wrap';
+
+    const fullBody = document.createElement('div');
+    fullBody.className = 'announce-fullbody';
+    fullBody.textContent = ann.body || '';
+    bodyWrap.appendChild(fullBody);
+
+    // Per-guild results list
+    const results = ann.results || [];
+    if (results.length > 0) {
+      const tWrapper = document.createElement('div');
+      tWrapper.style.cssText = 'overflow-x:auto;';
+      const tbl = document.createElement('table');
+      tbl.style.minWidth = '400px';
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      ['サーバー', '結果', '詳細'].forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      tbl.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      results.forEach(r => {
+        const tr = document.createElement('tr');
+
+        const tdName = document.createElement('td');
+        tdName.textContent = r.guild_name || r.guild_id;
+        tr.appendChild(tdName);
+
+        const tdSt = document.createElement('td');
+        const st = (r.status || '').toLowerCase();
+        const b = document.createElement('span');
+        b.className = 'badge ' + (
+          st === 'sent'    ? 'badge-sent'    :
+          st === 'skipped' ? 'badge-skipped' : 'badge-failed'
+        );
+        b.textContent = st === 'sent' ? '送信' : st === 'skipped' ? 'スキップ' : '失敗';
+        tdSt.appendChild(b);
+        tr.appendChild(tdSt);
+
+        const tdDetail = document.createElement('td');
+        tdDetail.textContent = r.detail || '';
+        tr.appendChild(tdDetail);
+
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      tWrapper.appendChild(tbl);
+      bodyWrap.appendChild(tWrapper);
+    }
+
+    details.appendChild(bodyWrap);
+    announceListEl.appendChild(details);
+  });
+}
+
+// ===== Guild History Modal =====
+const ghmOverlay  = document.getElementById('ghm-overlay');
+const ghmTitle    = document.getElementById('ghm-title');
+const ghmTotal    = document.getElementById('ghm-total');
+const ghmClose    = document.getElementById('ghm-close');
+const ghmTbody    = document.getElementById('ghm-tbody');
+const ghmPrev     = document.getElementById('ghm-prev');
+const ghmNext     = document.getElementById('ghm-next');
+const ghmPageInfo = document.getElementById('ghm-page-info');
+
+let ghmGuildId   = null;
+let ghmGuildName = '';
+let ghmPage      = 0;
+let ghmTotal_    = 0;
+let ghmPageSize  = 25;
+let ghmFetching  = false;
+
+function openHistoryModal(guildId, guildName) {
+  ghmGuildId   = guildId;
+  ghmGuildName = guildName;
+  ghmPage      = 0;
+  ghmTotal_    = 0;
+  ghmPageSize  = 25;
+
+  ghmTitle.textContent = '再生履歴 — ' + guildName;
+  ghmTotal.textContent  = '';
+  ghmTbody.innerHTML    = '';
+  ghmPageInfo.textContent = 'ページ 1 / 1';
+  ghmPrev.disabled = true;
+  ghmNext.disabled = true;
+
+  ghmOverlay.classList.add('ghm-open');
+  ghmClose.focus();
+
+  fetchHistoryPage(0);
+}
+
+function closeHistoryModal() {
+  ghmOverlay.classList.remove('ghm-open');
+  ghmGuildId = null;
+}
+
+async function fetchHistoryPage(page) {
+  if (!ghmGuildId || ghmFetching) return;
+  ghmFetching = true;
+  ghmPrev.disabled = true;
+  ghmNext.disabled = true;
+
+  try {
+    const res = await api('/api/admin/guilds/' + ghmGuildId + '/history?page=' + page);
+    if (!res.ok) {
+      showToast('履歴の取得に失敗しました', false);
+      return;
+    }
+    const d = await res.json();
+    ghmPage     = d.page      ?? page;
+    ghmTotal_   = d.total     ?? 0;
+    ghmPageSize = d.page_size ?? 25;
+    renderHistoryPage(d.items || []);
+  } catch (e) {
+    if (e.message !== '401') showToast('ネットワークエラー', false);
+  } finally {
+    ghmFetching = false;
+    updateGhmNavState();
+  }
+}
+
+function fmtHistoryTs(iso) {
+  // Show local datetime as "M/D HH:MM"
+  const d = new Date(iso);
+  const mo = d.getMonth() + 1;
+  const dy = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return mo + '/' + dy + ' ' + hh + ':' + mm;
+}
+
+function renderHistoryPage(items) {
+  const totalPages = Math.max(1, Math.ceil(ghmTotal_ / ghmPageSize));
+
+  ghmTotal.textContent  = '全 ' + ghmTotal_ + ' 件';
+  ghmPageInfo.textContent = 'ページ ' + (ghmPage + 1) + ' / ' + totalPages;
+  ghmTbody.innerHTML    = '';
+
+  if (items.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 3;
+    td.className = 'ghm-empty';
+    td.textContent = '履歴なし';
+    tr.appendChild(td);
+    ghmTbody.appendChild(tr);
+    return;
+  }
+
+  items.forEach(item => {
+    const tr = document.createElement('tr');
+
+    // 時刻
+    const tdTs = document.createElement('td');
+    tdTs.className = 'ghm-ts';
+    tdTs.textContent = fmtHistoryTs(item.played_at);
+    tr.appendChild(tdTs);
+
+    // 曲
+    const tdTrack = document.createElement('td');
+    if (item.url) {
+      const a = document.createElement('a');
+      a.className = 'ghm-track-link';
+      a.href = item.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = item.title || item.url;
+      tdTrack.appendChild(a);
+    } else {
+      const span = document.createElement('span');
+      span.textContent = item.title || '—';
+      tdTrack.appendChild(span);
+    }
+    tr.appendChild(tdTrack);
+
+    // ユーザー
+    const tdUser = document.createElement('td');
+    tdUser.className = 'ghm-user';
+    tdUser.textContent = item.username !== null && item.username !== undefined
+      ? item.username
+      : item.userid;
+    tr.appendChild(tdUser);
+
+    ghmTbody.appendChild(tr);
+  });
+}
+
+function updateGhmNavState() {
+  const totalPages = Math.max(1, Math.ceil(ghmTotal_ / ghmPageSize));
+  ghmPrev.disabled = ghmPage <= 0;
+  ghmNext.disabled = ghmPage >= totalPages - 1;
+}
+
+// Modal event listeners
+ghmClose.addEventListener('click', closeHistoryModal);
+
+ghmOverlay.addEventListener('click', (e) => {
+  if (e.target === ghmOverlay) closeHistoryModal();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ghmOverlay.classList.contains('ghm-open')) {
+    closeHistoryModal();
+  }
+});
+
+ghmPrev.addEventListener('click', () => {
+  if (ghmPage > 0) fetchHistoryPage(ghmPage - 1);
+});
+
+ghmNext.addEventListener('click', () => {
+  const totalPages = Math.max(1, Math.ceil(ghmTotal_ / ghmPageSize));
+  if (ghmPage < totalPages - 1) fetchHistoryPage(ghmPage + 1);
+});
+
+// ===== Toast =====
+function showToast(message, isOk) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + (isOk ? 'toast-ok' : 'toast-err');
+  toast.textContent = message; // textContent — no XSS
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s';
+    setTimeout(() => toast.remove(), 350);
+  }, 4000);
+}
+
+// ===== Init =====
+(function init() {
+  const stored = localStorage.getItem('smilemusic_admin_token');
+  if (stored) {
+    token = stored;
+    showApp();
+    startPolling();
+  } else {
+    showGate();
+  }
+})();
+</script>
+</body>
+</html>
