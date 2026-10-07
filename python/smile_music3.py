@@ -3398,7 +3398,12 @@ async def help(ctx):
         name="\u200b",
         value=":computer: 質問, 要望などは、[こちら](https://twitter.com/IsthisOga)のTwitterアカウントにお願いします。",
         inline=False)
-    await ctx.channel.send(embed=help_embed)
+    help_embed.add_field(
+        name="\u200b",
+        value=":scroll: [利用規約](https://smilemusic3-legal.oga.ninja/terms) / [プライバシーポリシー](https://smilemusic3-legal.oga.ninja/privacy)",
+        inline=False)
+    # channel.send だとインタラクションに応答せず「アプリケーションが応答しませんでした」になる
+    await ctx.response.send_message(embed=help_embed)
 
 
 def get_keyword_url(keyword, sort='v'):

@@ -25,6 +25,14 @@ body {
   line-height: 1.8;
   font-size: 16px;
   word-break: break-word;
+  line-break: strict;          /* 行頭に「ー」「ッ」「ィ」などの小書きカナを置かない */
+}
+
+/* 見出しは文節単位で折り返し、行の長さをそろえる（Chrome/Edge 119+。非対応ブラウザでは無視される） */
+h1, h2 {
+  word-break: auto-phrase;
+  overflow-wrap: anywhere;     /* 上の指定で body の break-word が外れるため、はみ出し防止を明示 */
+  text-wrap: balance;
 }
 
 a {
@@ -113,11 +121,6 @@ li { margin: 0 0 6px; }
   font-size: 0.92rem;
 }
 
-.placeholder {
-  color: #ffb454;
-  font-weight: 600;
-}
-
 /* ---- index のカード ---- */
 .cards {
   display: grid;
@@ -142,7 +145,8 @@ li { margin: 0 0 6px; }
   text-decoration: none;
   color: var(--fg);
 }
-.card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+/* カード内の見出し（h2）は、全体の h2 の左の線・余白・色を打ち消して今の見た目を保つ */
+.card h2 { margin: 0 0 6px; padding-left: 0; border-left: 0; font-size: 1.05rem; color: inherit; }
 .card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
 
 /* ---- フッタ ---- */
