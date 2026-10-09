@@ -3400,7 +3400,7 @@ async def help(ctx):
         inline=False)
     help_embed.add_field(
         name="\u200b",
-        value=":scroll: [利用規約](https://smilemusic3-legal.oga.ninja/terms) / [プライバシーポリシー](https://smilemusic3-legal.oga.ninja/privacy)",
+        value=":scroll: [利用規約](https://www.oga.ninja/legal/oga-music/terms) / [プライバシーポリシー](https://www.oga.ninja/legal/oga-music/privacy)",
         inline=False)
     # channel.send だとインタラクションに応答せず「アプリケーションが応答しませんでした」になる
     await ctx.response.send_message(embed=help_embed)

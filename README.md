@@ -4,7 +4,7 @@
 
 オリジナルの **prefix / slash コマンド** ベースの操作に加え、**Discord Activity (Embedded App)** による **Spotify ライクな Web UI** を備えていて、ライブラリ管理・プレイリスト操作・リアルタイムオーディオビジュアライザなどがブラウザ的な UX で使えます。
 
-BOT・アクティビティ（OGA_Music）を利用した時点で、[利用規約](https://smilemusic3-legal.oga.ninja/terms)と[プライバシーポリシー](https://smilemusic3-legal.oga.ninja/privacy)に同意したものとみなします。
+BOT・アクティビティ（OGA_Music）を利用した時点で、[利用規約](https://www.oga.ninja/legal/oga-music/terms)と[プライバシーポリシー](https://www.oga.ninja/legal/oga-music/privacy)に同意したものとみなします。
 
 ---
 
