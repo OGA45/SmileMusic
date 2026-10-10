@@ -58,6 +58,7 @@ from activity_api import (
     register_connect_handler,
 )
 from activity_api.net_guard import SsrfBlocked, validate_public_url
+from activity_api import status as public_status
 # BC-PERF-07 / MOD-PERF-02: smile_music3 の SQL ヘルパも playlist_store と同じ
 # グローバル接続 (conn) を使うため、スレッド安全化用の同一ロックを共有する。
 from activity_api.playlist_store import db_lock as _db_lock
@@ -1794,6 +1795,16 @@ def get_admin_db_stats_sql():
 
 
 @_db_locked
+def db_ping_sql() -> float:
+    """公開ステータス用の DB 死活確認。SELECT 1 の応答時間 [ms] を返す。"""
+    t0 = time.perf_counter()
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1")
+        cur.fetchone()
+    return (time.perf_counter() - t0) * 1000.0
+
+
+@_db_locked
 def get_announce_channel_sql(key):
     """guild のお知らせチャンネル ID (str) を返す。未設定なら None。"""
     with conn.cursor() as cur:
@@ -2180,8 +2191,11 @@ async def _finish_playback(ctx, url, player, play_future, started, history, expe
     await asyncio.wait((play_future, started), return_when=asyncio.FIRST_COMPLETED)
     if started.done() or player.frames_read >= _STARTED_FRAMES:
         _spawn_history(gid, history)
+        _record_playback_success(url)
     err = await play_future
     outcome = _classify_playback_end(player, err, expected_ms)
+    if outcome in ('early_fail', 'midtrack'):
+        _record_playback_failure(url, f"{player.eof_stderr or ''} {err!r}")
     if outcome in ('early_fail', 'midtrack'):
         log.warning('playback %s guild=%s url=%s frames=%d pos_ms=%d rc=%s err=%r stderr=%s',
                     outcome, gid, url, player.frames_read, player.total_milliseconds,
@@ -2310,12 +2324,15 @@ async def play_music(ctx: discord.Interaction, url, first_seek=None, normalize=N
         return False
     except SourceUnavailable as e:
         log.warning("play_music: %s unavailable: %s", url, e)
+        _record_playback_failure(url, str(e))
         await _playback_error_notice(ctx, ctx.guild.id, f"{url}は再生不可のためスキップします。")
         return True
-    except BaseException:
+    except BaseException as e:
         log.exception('unexpected error')
         if not play_started:
             _cleanup_unplayed(player)
+        # 抽出の失敗 (yt-dlp) もここに来る。配信元全体の障害を示すものだけが記録される
+        _record_playback_failure(url, f"{type(e).__name__}: {e}")
         await _playback_error_notice(ctx, ctx.guild.id, f"{url}は再生不可のためスキップします。")
         return True
 
@@ -2345,12 +2362,15 @@ async def play_live_music(ctx: discord.Interaction, url, first_seek=None, histor
         raise
     except SourceUnavailable as e:
         log.warning("play_live_music: %s unavailable: %s", url, e)
+        _record_playback_failure(url, str(e))
         await _playback_error_notice(ctx, ctx.guild.id, f"{url}は再生不可のためスキップします。")
         return True
-    except BaseException:
+    except BaseException as e:
         log.exception('unexpected error')
         if not play_started:
             _cleanup_unplayed(player)
+        # 抽出の失敗 (yt-dlp) もここに来る。配信元全体の障害を示すものだけが記録される
+        _record_playback_failure(url, f"{type(e).__name__}: {e}")
         await _playback_error_notice(ctx, ctx.guild.id, f"{url}は再生不可のためスキップします。")
         return True
 
@@ -3467,7 +3487,8 @@ async def infos_from_ytdl(url, loop=None, normalize=False):
     loop = loop or asyncio.get_event_loop()
     try:
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-    except Exception:
+    except Exception as e:
+        _record_playback_failure(url, f"{type(e).__name__}: {e}")
         return False
     if 'entries' in data:
         data = data['entries'][0]
@@ -4567,6 +4588,200 @@ async def _loop_lag_monitor() -> None:
         pass
 
 
+# ---------- 公開ステータス (status.oga.ninja。activity_api/status.py) ----------
+# 判定のしきい値は gomatalk (pkg/health/gateway.go) と同じ。Discord の心拍は約 41 秒ごと。
+_GW_SAMPLE_S = 10.0       # サンプルを取る間隔
+_GW_DEGRADED_S = 120.0    # 正常な接続が確認できない時間がこれを超えたら「再接続中」
+_GW_MAJOR_S = 420.0       # これを超えたら「Discord との通信が途絶」
+_GW_GRACE_S = 420.0       # 起動してから一度も接続できていない間は、この時間まで「起動中」
+_GW_STALE_S = 60.0        # サンプルがこれより古い = サンプラーが止まっている
+_gw_obs: dict = {"at": None, "healthy_at": None, "rtt_ms": None}
+
+_DB_PROBE_S = 60.0        # DB の死活確認の間隔
+_DB_TIMEOUT_S = 15.0      # これを超えて応答が無ければ「利用できません」
+_DB_SLOW_MS = 1000.0      # これより遅ければ「性能低下」
+_db_obs: dict = {"at": None, "ok": None, "ms": None, "inflight_since": None}
+
+_PLAYBACK_WINDOW_S = 900.0  # 直近 15 分の再生結果で判定する
+_PLAYBACK_MIN_FAIL_URLS = 3  # 別々の曲がこの数以上失敗していたら障害とみなす
+# 配信元全体の障害を示す文言 (小文字で比較)。曲ごとの事情による失敗は下の _PLAYBACK_ITEM_MARKERS
+_PLAYBACK_SOURCE_MARKERS = (
+    "not a bot", "http error 403", "403 forbidden", "http error 429", "too many requests",
+    "http error 5", "server returned 5", "nsig", "signature", "challenge",
+    "requested format is not available", "unable to extract", "connection reset",
+    "connection refused", "timed out", "name resolution", "network is unreachable",
+)
+_PLAYBACK_ITEM_MARKERS = (
+    "video unavailable", "private video", "confirm your age", "age-restricted", "age restricted",
+    "members-only", "members only", "join this channel", "not available in your country",
+    "geo restrict", "has been removed", "copyright", "premiere", "live event will begin",
+    "this video is not available", "unsupported url", "no audio stream",
+)
+# (時刻, 成功したか, URL のハッシュ)。URL そのものは残さない
+_playback_events: dict[str, collections.deque] = {
+    "youtube": collections.deque(maxlen=30),
+    "other": collections.deque(maxlen=30),
+}
+
+
+def _status_bot_id() -> str:
+    suffix = playlist_store.TABLE_SUFFIX
+    return {"3": "oga-music-alpha", "2": "oga-music-beta", "": "oga-music"}.get(
+        suffix, f"oga-music-{suffix}")
+
+
+def _gateway_sample() -> tuple[bool, int | None, float]:
+    """Discord との接続が健全か、心拍の往復時間 [ms]、最後の心拍 ACK からの経過秒を返す (待たない)。"""
+    if client.is_closed() or not client.is_ready():
+        return False, None, 0.0
+    ws = getattr(client, "ws", None)
+    if ws is None:
+        return False, None, 0.0
+    lat = client.latency  # 接続し直した直後 (最初の ACK 前) や切断中は inf
+    if not (isinstance(lat, float) and math.isfinite(lat) and lat >= 0):
+        return False, None, 0.0
+    # 心拍の ACK がいつ届いたか (discord.py の KeepAliveHandler は perf_counter で記録する)。
+    # 鮮度の判定は _status_gateway で 1 回だけ行う
+    last_ack = getattr(getattr(ws, "_keep_alive", None), "_last_ack", None)
+    ack_age = max(0.0, time.perf_counter() - last_ack) if isinstance(last_ack, float) else 0.0
+    return True, round(lat * 1000.0), ack_age
+
+
+async def _gateway_sampler() -> None:
+    try:
+        while True:
+            now = time.monotonic()
+            try:
+                ok, rtt, ack_age = _gateway_sample()
+            except Exception:
+                log.debug("gateway sample failed", exc_info=True)
+                ok, rtt, ack_age = False, None, 0.0
+            _gw_obs["at"] = now
+            _gw_obs["rtt_ms"] = rtt if ok else None
+            if ok:
+                # 「最後に ACK を確認できた時刻」として持つ (healthy_at からの経過 = ACK の経過)
+                _gw_obs["healthy_at"] = now - ack_age
+            await asyncio.sleep(_GW_SAMPLE_S)
+    except asyncio.CancelledError:
+        pass
+
+
+def _status_gateway(now: float):
+    since_start = now - _PROC_STARTED_MONO
+    at, healthy_at = _gw_obs["at"], _gw_obs["healthy_at"]
+    if at is None or now - at > _GW_STALE_S:
+        if since_start < _GW_GRACE_S:
+            return public_status.DEGRADED, "starting"
+        return public_status.MAJOR, "stale"
+    if healthy_at is None:
+        if since_start < _GW_GRACE_S:
+            return public_status.DEGRADED, "starting"
+        return public_status.MAJOR, "no_heartbeat"
+    age = now - healthy_at
+    if age <= _GW_DEGRADED_S:
+        return public_status.OPERATIONAL, None
+    if age <= _GW_MAJOR_S:
+        return public_status.DEGRADED, "reconnecting"
+    return public_status.MAJOR, "no_heartbeat"
+
+
+def _metric_gateway_rtt(now: float) -> int | None:
+    if _status_gateway(now)[0] != public_status.OPERATIONAL:
+        return None
+    return _gw_obs["rtt_ms"]
+
+
+def _db_probe_done(fut: asyncio.Future) -> None:
+    now = time.monotonic()
+    started = _db_obs["inflight_since"]
+    _db_obs["inflight_since"] = None
+    _db_obs["at"] = now
+    if fut.cancelled() or fut.exception() is not None:
+        _db_obs["ok"], _db_obs["ms"] = False, None
+    else:
+        # ロック待ちと executor の待ちも含めた、利用者から見た応答時間
+        _db_obs["ok"] = True
+        _db_obs["ms"] = (now - started) * 1000.0 if started is not None else fut.result()
+
+
+async def _db_prober() -> None:
+    """DB の死活を定期的に確かめる。前回の確認が終わっていなければ重ねない
+    (to_thread のスレッドは止められないので、終わるまで inflight のまま待つ)。"""
+    try:
+        while True:
+            if _db_obs["inflight_since"] is None:
+                _db_obs["inflight_since"] = time.monotonic()
+                fut = asyncio.ensure_future(_db(db_ping_sql))
+                fut.add_done_callback(_db_probe_done)
+            await asyncio.sleep(_DB_PROBE_S)
+    except asyncio.CancelledError:
+        pass
+
+
+def _status_database(now: float):
+    inflight = _db_obs["inflight_since"]
+    if inflight is not None and now - inflight > _DB_TIMEOUT_S:
+        return public_status.MAJOR, "unavailable"
+    if _db_obs["at"] is None:
+        return None  # まだ一度も確認していない (起動直後)
+    if now - _db_obs["at"] > _DB_PROBE_S * 5:
+        return public_status.MAJOR, "stale"
+    if not _db_obs["ok"]:
+        return public_status.MAJOR, "unavailable"
+    if (_db_obs["ms"] or 0.0) > _DB_SLOW_MS:
+        return public_status.DEGRADED, None
+    return public_status.OPERATIONAL, None
+
+
+def _playback_family(url) -> tuple[str, str]:
+    u = str(url or "").lower()
+    return ("youtube" if ("youtube.com" in u or "youtu.be" in u) else "other"), u
+
+
+def _record_playback_success(url) -> None:
+    """実際に音が出始めた (公開ステータス用。YouTube とそれ以外に分ける)。"""
+    fam, u = _playback_family(url)
+    _playback_events[fam].append((time.monotonic(), True, hash(u)))
+
+
+def _record_playback_failure(url, detail: str) -> None:
+    """再生・取得に失敗した。配信元全体の障害を示すものだけを数え、曲ごとの事情
+    (削除・非公開・年齢制限・地域制限など) や BOT 内部の例外は数えない。"""
+    text = str(detail or "").lower()
+    if not any(m in text for m in _PLAYBACK_SOURCE_MARKERS):
+        return
+    if any(m in text for m in _PLAYBACK_ITEM_MARKERS):
+        return
+    fam, u = _playback_family(url)
+    _playback_events[fam].append((time.monotonic(), False, hash(u)))
+
+
+def _status_playback(fam: str):
+    """利用者の実際の再生結果から判定する。利用者の入れた曲に左右されるので、
+    部品の状態そのものを一部障害 (partial_outage) までにする (深刻な障害は出さない)。"""
+    def fn(now: float):
+        ev = [e for e in _playback_events[fam] if now - e[0] <= _PLAYBACK_WINDOW_S]
+        fail_urls = {e[2] for e in ev if not e[1]}
+        fails = sum(1 for e in ev if not e[1])
+        # 別々の曲で配信元全体を示す失敗が続き、成功より多い = その配信元が使えない。
+        # 「少し鳴っては切れる」形の障害 (成功と失敗が交互) も拾えるよう、連続ではなく件数で見る
+        if len(fail_urls) >= _PLAYBACK_MIN_FAIL_URLS and fails >= len(ev) - fails:
+            return public_status.PARTIAL, "unavailable"
+        return public_status.OPERATIONAL, None
+    return fn
+
+
+def _register_public_status() -> None:
+    public_status.configure(bot=_status_bot_id(), started_wall=_PROC_STARTED_WALL)
+    # gateway と database は全体を major まで下げられる。再生の部品は一部障害 (partial_outage) が上限
+    public_status.register_component("gateway", public_status.MAJOR, _status_gateway)
+    # DB が使えないと再生の開始 (get_stream_sql) もできないので、全体を major まで下げてよい
+    public_status.register_component("database", public_status.MAJOR, _status_database)
+    public_status.register_component("playback_youtube", public_status.PARTIAL, _status_playback("youtube"))
+    public_status.register_component("playback_other", public_status.PARTIAL, _status_playback("other"))
+    public_status.register_metric("gateway_rtt_ms", _metric_gateway_rtt)
+
+
 # コアライブラリのバージョン (プロセス中は不変なので一度だけ収集してキャッシュ)
 _lib_versions_cache: dict | None = None
 
@@ -5345,8 +5560,9 @@ async def _resolve_single_track_via_ytdl(url: str) -> playlist_store.PlaylistTra
         data = await loop.run_in_executor(
             None, lambda: ytdl.extract_info(url, download=False),
         )
-    except Exception:
+    except Exception as e:
         log.exception('unexpected error')
+        _record_playback_failure(url, f"{type(e).__name__}: {e}")
         return None
     if "entries" in data:
         data = data["entries"][0]
@@ -5474,8 +5690,9 @@ async def _resolve_track_for_queue(url: str) -> playlist_store.PlaylistTrack:
         data = await asyncio.wait_for(_extract(), _QUEUE_ADD_TIMEOUT_S)
     except TimeoutError:
         raise ValueError("URL の解析がタイムアウトしました") from None
-    except Exception:
+    except Exception as e:
         log.exception("queue add: extract failed")
+        _record_playback_failure(url, f"{type(e).__name__}: {e}")
         raise ValueError("URL を解決できませんでした") from None
     if data.get("is_live"):
         raise ValueError("ライブ配信は追加できません。/live コマンドを使ってください")
@@ -7573,6 +7790,7 @@ async def _run() -> None:
         guild_history=_admin_guild_history,
         backfill_masters=_admin_backfill_masters,
     ))
+    _register_public_status()
     api_app = create_app()
     config = uvicorn.Config(
         api_app, host="0.0.0.0", port=8080, log_level="info",
@@ -7583,6 +7801,9 @@ async def _run() -> None:
     tick_task = asyncio.create_task(_progress_loop(), name="progress_loop")
     audio_task = asyncio.create_task(_audio_features_loop(), name="audio_features_loop")
     lag_task = asyncio.create_task(_loop_lag_monitor(), name="loop_lag_monitor")
+    gw_task = asyncio.create_task(_gateway_sampler(), name="status_gateway_sampler")
+    db_task = asyncio.create_task(_db_prober(), name="status_db_prober")
+    push_task = asyncio.create_task(public_status.push_loop(), name="status_push")
     try:
         async with client:
             await client.start(token)
@@ -7591,8 +7812,12 @@ async def _run() -> None:
         tick_task.cancel()
         audio_task.cancel()
         lag_task.cancel()
+        gw_task.cancel()
+        db_task.cancel()
+        push_task.cancel()
         await asyncio.gather(
-            api_task, tick_task, audio_task, lag_task, return_exceptions=True)
+            api_task, tick_task, audio_task, lag_task, gw_task, db_task, push_task,
+            return_exceptions=True)
 
 
 asyncio.run(_run())

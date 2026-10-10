@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import routes_image, routes_token, routes_ws
+from . import routes_image, routes_token, routes_ws, status
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,8 @@ def create_app() -> FastAPI:
     app.include_router(routes_token.router)
     app.include_router(routes_ws.router)
     app.include_router(routes_image.router)
+    # 公開ステータス (status.oga.ninja の Worker が毎分取得する。認証なし)
+    app.include_router(status.router)
 
     # 管理者ダッシュボード (SMILEMUSIC3_ADMIN_TOKEN 設定時のみ有効)。
     # static mount より前に登録するので /admin と /api/admin/* が優先される。
