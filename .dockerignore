@@ -20,9 +20,14 @@ activity/.env.*.local
 python/__pycache__/
 python/**/__pycache__/
 python/**/*.pyc
-python/.cache/
-python/.spotdl-cache/
+# spotipy / spotDL のトークンキャッシュ (ファイル)。イメージに入れない
+python/.cache
+python/.spotdl-cache
 python/dev/
+# 旧版と開発用の BOT (開発用には API キーが書かれている)。実行するのは smile_music3.py だけ
+python/smile_music.py
+python/smile_music2.py
+python/smile_music_dev.py
 # niconico DL キャッシュ (大きいので除外)
 python/sm*.opus
 python/mmrrHmDVtdw.opus

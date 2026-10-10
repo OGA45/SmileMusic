@@ -263,8 +263,8 @@ def _admin_get_errors(limit: int) -> list[dict]:
 # Suppress noise about console usage from errors
 yt_dlp.utils.bug_reports_ctx = lambda: ''
 
-# インスタンスごとのダウンロード先。複数インスタンスが ./python の bind mount を
-# 共有するため、.opus キャッシュを専用ディレクトリに分離する (未設定なら CWD)。
+# インスタンスごとのダウンロード先。.opus キャッシュをインスタンス専用の
+# ボリュームに置く (未設定なら CWD)。
 _DL_DIR = os.environ.get("OGA_MUSIC_DOWNLOAD_DIR", ".")
 os.makedirs(_DL_DIR, exist_ok=True)
 

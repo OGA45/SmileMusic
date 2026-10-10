@@ -35,7 +35,6 @@ COPY ./ffplay /bin
 COPY ./ffprobe /bin
 
 COPY ./requirements.txt /opt
-COPY ./python /opt
 WORKDIR /opt
 
 
@@ -56,6 +55,10 @@ RUN apt-get -y install --no-install-recommends \
         software-properties-common libopus-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# 依存はこの層のキャッシュが残る限り上がらない。最新にし直すときは
+# deploy/oga-music-deploy.sh build --refresh-deps (この値を変えてキャッシュを外す)
+# か、requirements.txt の下限を上げる。
+ARG DEPS_REFRESH=0
 RUN pip install --upgrade pip
 
 RUN pip install -r requirements.txt
@@ -65,10 +68,17 @@ ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 RUN curl -fsSL https://deno.land/install.sh | sh
 
 # Stage 1 でビルドした Activity フロントを取り込む。FastAPI が StaticFiles で配信する。
-# `./python:/opt` の bind mount に上書きされないよう /opt の外に置く。
 COPY --from=activity_builder /app/dist /srv/activity_dist
+
+# BOT のコード。依存のインストールより後に置き、コードだけの変更で
+# apt / pip の層を作り直さない (作り直すと固定していない依存が上がる)。
+COPY ./python /opt
 
 # Activity API (FastAPI / WebSocket) を公開するポート
 EXPOSE 8080
+
+# どの版のイメージかを docker inspect で確かめられるようにする
+ARG OGA_MUSIC_VERSION=dev
+LABEL oga.music.version=$OGA_MUSIC_VERSION
 
 CMD ["python", "smile_music3.py"]

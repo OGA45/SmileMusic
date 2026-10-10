@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     # Activity フロントの静的ビルド成果物を root にマウント。
     # /api/* と /ws/* は上で登録済みなのでそちらが優先される。
     # 既定パスは Dockerfile の COPY 先と合わせる (`/srv/activity_dist`)。
-    # `./python:/opt` の bind mount に上書きされないように /opt の外。
+    # BOT のコード (/opt) とは別の場所に置く。
     static_dir = Path(os.environ.get("ACTIVITY_STATIC_DIR", "/srv/activity_dist"))
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="activity")

@@ -32,15 +32,21 @@ services:
   # environment でインスタンス固有の値 (SMILEMUSIC2_*/SMILEMUSIC_*) を
   # SMILEMUSIC3_* にマッピングする。テーブルは OGA_MUSIC_TABLE_SUFFIX で分離
   # (alpha="3"=従来テーブル, beta="2"=旧py2のguilds2を継承, release=""=旧pyのguildsを継承)。
+  # コードはイメージに含める (./python を bind mount しない)。イメージは oga-music:<チャンネル>。
+  # ビルドするのは alpha だけで、beta/release には alpha で確かめた版を昇格させる
+  # (deploy/oga-music-deploy.sh の build / promote / rollback)。
 
   oga_music_alpha:
     restart: always
     build:
       context: .
       args:
-        # フロントを vite build するときに必要 (VITE_ prefix の env だけが
-        # クライアントバンドルに含められる)
+        # Activity のクライアント ID は、実行時にホスト名 (<ID>.discordsays.com) から取る。
+        # ここで渡す値は、ホスト名から取れないとき (Discord の外で開いたとき) の予備。
         VITE_DISCORD_CLIENT_ID: "${SMILEMUSIC3_DISCORD_CLIENT_ID}"
+        # イメージのラベルに入れる版の名前 (deploy/oga-music-deploy.sh が渡す)
+        OGA_MUSIC_VERSION: "${OGA_MUSIC_VERSION:-dev}"
+    image: oga-music:alpha
     container_name: "oga_music_alpha"
     tty: true
     depends_on:
@@ -68,7 +74,6 @@ services:
       - OGA_MUSIC_DOWNLOAD_DIR=/var/cache/oga_music
       - PYTHONDONTWRITEBYTECODE=1
     volumes:
-      - ./python:/opt
       - oga_alpha_dl:/var/cache/oga_music
     # ローカル動作確認用にホストへ露出 (本番では Traefik 経由のみで使う想定)
     ports:
@@ -88,13 +93,13 @@ services:
 
   oga_music_beta:
     # Dev Portal / DNS の準備が済むまで誤って起動しないようプロファイルで隔離。
-    # 起動するときだけ: docker compose --profile full up -d oga_music_beta
+    # 起動するときは、版を昇格させてから起動する:
+    #   deploy/oga-music-deploy.sh promote beta <版> → deploy/oga-music-deploy.sh start beta
     profiles: ["full"]
     restart: always
-    build:
-      context: .
-      args:
-        VITE_DISCORD_CLIENT_ID: "${SMILEMUSIC2_DISCORD_CLIENT_ID}"
+    # ビルドしない。alpha で確かめた版を deploy/oga-music-deploy.sh promote beta で昇格させる
+    image: oga-music:beta
+    pull_policy: never
     container_name: "oga_music_beta"
     tty: true
     depends_on:
@@ -123,7 +128,6 @@ services:
       - OGA_MUSIC_DOWNLOAD_DIR=/var/cache/oga_music
       - PYTHONDONTWRITEBYTECODE=1
     volumes:
-      - ./python:/opt
       - oga_beta_dl:/var/cache/oga_music
     # ホストポートは公開しない (本番の 8081 は別サービスが使用中)。
     # 外部からは Traefik、ハブからは内部ネットワーク経由で到達する。
@@ -142,10 +146,9 @@ services:
   oga_music_release:
     profiles: ["full"]
     restart: always
-    build:
-      context: .
-      args:
-        VITE_DISCORD_CLIENT_ID: "${SMILEMUSIC_DISCORD_CLIENT_ID}"
+    # ビルドしない。beta で確かめた版を deploy/oga-music-deploy.sh promote release で昇格させる
+    image: oga-music:release
+    pull_policy: never
     container_name: "oga_music_release"
     tty: true
     depends_on:
@@ -175,7 +178,6 @@ services:
       - OGA_MUSIC_DOWNLOAD_DIR=/var/cache/oga_music
       - PYTHONDONTWRITEBYTECODE=1
     volumes:
-      - ./python:/opt
       - oga_release_dl:/var/cache/oga_music
     networks:
       - default

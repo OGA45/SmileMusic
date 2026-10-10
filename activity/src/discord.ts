@@ -1,6 +1,15 @@
 import { DiscordSDK } from '@discord/embedded-app-sdk'
 
-const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID
+// Discord は Activity を https://<アプリケーション ID>.discordsays.com で配信する。
+// 同じイメージを alpha / beta / release に昇格させて使うので、クライアント ID は
+// ホスト名から取る。ビルド時の VITE_DISCORD_CLIENT_ID は、ホスト名から取れないとき
+// (Discord の外で開いたときなど) の予備。
+function clientIdFromHost(): string | undefined {
+  const m = /^(\d+)\.discordsays\.com$/.exec(window.location.hostname)
+  return m ? m[1] : undefined
+}
+
+const CLIENT_ID = clientIdFromHost() ?? import.meta.env.VITE_DISCORD_CLIENT_ID
 const TOKEN_ENDPOINT = import.meta.env.VITE_TOKEN_ENDPOINT ?? '/.proxy/api/token'
 
 // Discord クライアントの iframe 内で開かれた時は frame_id が URL に付く。

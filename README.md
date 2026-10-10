@@ -137,10 +137,21 @@ JELLYFIN_PASSWORD=...
 
 ### ビルドと起動
 
+BOT は alpha / beta / release の 3 インスタンスで、どれも同じイメージ `oga-music:<チャンネル>` で動きます。コードはイメージに含まれるので、`python/` を書き換えただけでは動いているコンテナは変わりません。ビルドするのは alpha だけで、beta と release には alpha で確かめた版を昇格させます。
+
 ```bash
-docker compose build smile_music_py3 --no-cache
-docker compose up -d
+bash deploy/oga-music-deploy.sh build [ラベル]          # alpha をビルドし、版タグ (例 20261011-153012) を付けて入れ替える
+bash deploy/oga-music-deploy.sh promote beta <版>       # alpha で確かめた版を beta に昇格
+bash deploy/oga-music-deploy.sh promote release <版>    # beta で確かめた版を release に昇格
+bash deploy/oga-music-deploy.sh rollback <チャンネル> <版>  # 前の版に戻す
+bash deploy/oga-music-deploy.sh start <チャンネル>      # 初めて動かすとき (先に promote でタグを付ける)
+bash deploy/oga-music-deploy.sh status                  # 各チャンネルの版
+bash deploy/oga-music-deploy.sh versions                # 残っている版の一覧
 ```
+
+- 入れ替えの前に、そのインスタンスでボイス接続中や Activity 利用中のサーバーがないかを確かめ、使用中なら何も変えずに止まります (`--force` で無視)。
+- 依存 (yt-dlp など) はビルドキャッシュが残る限り上がりません。最新にするときは `build --refresh-deps` を使うか、`requirements.txt` の下限を上げます。
+- beta / release は `docker compose --profile full` のサービスです。初めて動かすときは `promote` でタグを付けてから `start` します。ハブは `docker compose --profile full up -d oga_music_hub` で起動します (サービス名を付けずに `up` すると、まだタグの無い beta / release で失敗します)。
 
 ローカル確認は `http://localhost:8080/` で Activity の静的フロントが見えます (実際の動作には Discord 経由のアクセスが必要)。
 
