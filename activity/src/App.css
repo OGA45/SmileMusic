@@ -278,9 +278,9 @@ html, body, #root {
   text-align: left;
   color: var(--fg);
   border-radius: 6px;
-  justify-content: center; /* compact: サムネ中央寄せ */
-}
-.library-overlay.expanded .library-item {
+  /* 開閉どちらでも左寄せにする。中央寄せだと、閉じるときに幅が縮む間
+     サムネが行の中央から左へ流れて見える。コンパクト時は中身の幅 (72px -
+     余白) がサムネの 48px とちょうど同じなので、見た目は中央寄せと変わらない */
   justify-content: flex-start;
 }
 .library-item:hover { background: rgba(255, 255, 255, 0.05); }
